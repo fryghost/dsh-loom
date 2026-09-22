@@ -214,12 +214,25 @@ Host (src/index.js)
 └── RPC /dsh-loom        getManifest / putManifest / preflight（loopback）
 
 Client (src/client.cjs)
-├── LoomPanel            项目列表
+├── LoomIcon             侧边栏图标（sidebar.panellist）
+├── LoomPanel            项目列表（main 面板）
 ├── ProjectEditor        文件夹多归属编辑（无独占、无主副）
 └── PreflightPanel       上下文预检（技能来源 / 冲突 / 指令 / 写入边界）
 ```
 
 核心逻辑全部是纯函数，放在 `src/core/`，可脱离 DSH 独立测试。
+
+### 为什么 Loom 占用的是「主面板」而不是侧边栏座位
+
+侧边栏里的 `sidebar.workspaces` 是 `kind: "single"` 且标记 `replaceRisk: "shadows-shipped-ui"`——**注册进去等于顶掉系统自带的工作区/会话浏览器**，用户会直接看不到自己的会话列表。
+
+所以 Loom 用**加法型**结构：在 `sidebar.panellist` 注册一个图标（`id: 'loom'`），再由同一个 id 寻址 `main`（keyed 槽位，只保留了 `conversation`）里的面板。这样：
+
+- **workspace** —— 原生会话浏览器原样保留；
+- **项目** —— Loom 自己的面板，点侧边栏图标进入；
+- **闲聊** —— `conversation` 完全不受影响。
+
+`test/client-contract.test.cjs` 固化了这条约束：一旦有人把注册改回 `sidebar.workspaces`，测试会直接失败。
 
 ## 开发
 
