@@ -1,5 +1,10 @@
 # dsh-loom
 
+<p>
+  <a href="https://github.com/fryghost/dsh-loom/actions/workflows/ci.yml"><img src="https://github.com/fryghost/dsh-loom/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+</p>
+
 **把多个文件夹织成一个 DSH 项目上下文——并且在开始会话前，让你看清它到底会加载什么。**
 
 DSH 是一个 *harness*（缰绳/机架），而织机的 harness 正是控制经线的那部分。Loom 做的事就是织：把多个文件夹的经线织进同一个会话上下文。
