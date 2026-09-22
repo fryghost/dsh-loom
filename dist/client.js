@@ -2,7 +2,14 @@ window.__ModuleLoader__.load({ id: 'dsh-loom', factory: (require) => { var modul
 
 // src/client.cjs
 var React = require("react");
-var ReactDOM = require("react-dom");
+var {
+  Button,
+  Tag,
+  StateDot,
+  Modal,
+  Input,
+  IconFolderOpenOutline16
+} = require("@deepseek-ai/dsh-client-ui-primitives");
 var h = React.createElement;
 var NS = "dsh-loom";
 var CHANNEL = "/dsh-loom";
@@ -56,7 +63,8 @@ var dictionaries = {
     memberList: "\u53C2\u4E0E\u7684\u6587\u4EF6\u5939",
     defaultStart: "\u9ED8\u8BA4\u8D77\u70B9",
     folderPicker: "\u52FE\u9009\u53C2\u4E0E\u7684\u6587\u4EF6\u5939",
-    folderPickerHint: "\u6587\u4EF6\u5939\u53EF\u4EE5\u540C\u65F6\u5C5E\u4E8E\u591A\u4E2A\u9879\u76EE\u3002\u4EFB\u4F55\u4E00\u4E2A\u6587\u4EF6\u5939\u90FD\u53EF\u4EE5\u4F5C\u4E3A\u9ED8\u8BA4\u8D77\u70B9\uFF0C\u8FD9\u4E0D\u5F71\u54CD\u5B83\u80FD\u8D21\u732E\u4EC0\u4E48\u3002"
+    folderPickerHint: "\u6587\u4EF6\u5939\u53EF\u4EE5\u540C\u65F6\u5C5E\u4E8E\u591A\u4E2A\u9879\u76EE\u3002\u4EFB\u4F55\u4E00\u4E2A\u6587\u4EF6\u5939\u90FD\u53EF\u4EE5\u4F5C\u4E3A\u9ED8\u8BA4\u8D77\u70B9\uFF0C\u8FD9\u4E0D\u5F71\u54CD\u5B83\u80FD\u8D21\u732E\u4EC0\u4E48\u3002",
+    writeBoundaryTitle: "\u5199\u5165\u8303\u56F4"
   },
   en: {
     projects: "Projects",
@@ -107,134 +115,111 @@ var dictionaries = {
     memberList: "Folders",
     defaultStart: "Starting point",
     folderPicker: "Select the folders",
-    folderPickerHint: "A folder may belong to any number of projects. Any folder can be the starting point \u2014 that never affects what it contributes."
+    folderPickerHint: "A folder may belong to any number of projects. Any folder can be the starting point \u2014 that never affects what it contributes.",
+    writeBoundaryTitle: "Write scope"
   }
 };
 var STYLES = `
 .loom-panel {
-  display: flex; flex-direction: column; gap: 20px;
-  padding: 24px 28px 32px; height: 100%; overflow-y: auto;
+  height: 100%; overflow-y: auto;
+  padding: 24px;
   color: var(--dsw-alias-label-primary);
-  font-size: 13px; line-height: 1.6;
+  font-size: 14px; line-height: 22px;
 }
-.loom-inner { display: flex; flex-direction: column; gap: 20px; width: 100%; max-width: 760px; }
+.loom-inner {
+  display: flex; flex-direction: column; gap: 20px;
+  width: 100%; max-width: 720px; margin: 0 auto;
+}
 
 .loom-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.loom-head-text { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
-.loom-h1 { font-size: 17px; font-weight: 600; letter-spacing: .01em; margin: 0; }
-.loom-sub { color: var(--dsw-alias-label-secondary); font-size: 12.5px; }
-
-.loom-btn {
-  appearance: none; display: inline-flex; align-items: center; gap: 6px;
-  border: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-layer-1);
-  color: var(--dsw-alias-label-primary);
-  border-radius: 8px; padding: 5px 11px;
-  font: inherit; font-size: 12.5px; white-space: nowrap; cursor: pointer;
-  transition: background .12s ease, border-color .12s ease;
-}
-.loom-btn:hover { background: var(--dsw-alias-bg-layer-2); border-color: var(--dsw-alias-border-l2); }
-.loom-btn:disabled { opacity: .45; cursor: default; }
-.loom-btn-primary { background: var(--dsw-alias-brand-primary); border-color: transparent; color: #fff; }
-.loom-btn-primary:hover { background: var(--dsw-alias-brand-primary); filter: brightness(1.08); }
-.loom-btn-quiet { border-color: transparent; background: transparent; color: var(--dsw-alias-label-secondary); }
-.loom-btn-quiet:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+.loom-head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
+.loom-h1 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }
+.loom-sub { margin: 0; color: var(--dsw-alias-label-secondary); }
 
 .loom-card {
-  display: flex; flex-direction: column; gap: 0;
-  border: 1px solid var(--dsw-alias-border-l1);
+  display: flex; flex-direction: column;
+  border: 0.5px solid var(--dsw-alias-border-l3);
   background: var(--dsw-alias-bg-layer-1);
-  border-radius: 12px; overflow: hidden;
+  border-radius: 16px; overflow: hidden;
 }
-.loom-card-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 14px 16px; }
+.loom-card-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 12px; padding: 14px 16px;
+}
 .loom-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.loom-name { font-size: 14px; font-weight: 600; }
+.loom-name {
+  font-size: 15px; line-height: 22px; font-weight: 500;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .loom-card-actions { display: flex; align-items: center; gap: 8px; flex: none; }
 
-.loom-members { display: flex; flex-direction: column; border-top: 1px solid var(--dsw-alias-border-l1); }
-.loom-member {
-  display: flex; align-items: center; gap: 8px;
-  padding: 9px 16px; font-size: 12.5px;
-}
-.loom-member + .loom-member { border-top: 1px solid var(--dsw-alias-border-l1); }
+.loom-members { display: flex; flex-direction: column; border-top: 0.5px solid var(--dsw-alias-border-l3); }
+.loom-member { display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
+.loom-member + .loom-member { border-top: 0.5px solid var(--dsw-alias-border-l3); }
 .loom-member-name { flex: none; }
 .loom-member-path {
-  color: var(--dsw-alias-label-secondary); font-size: 12px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; flex: 1;
+  flex: 1; min-width: 0;
+  color: var(--dsw-alias-label-secondary); font-size: 13px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  direction: rtl; text-align: left;
 }
-.loom-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--dsw-alias-state-success-primary); flex: none; }
-.loom-dot-warn { background: var(--dsw-alias-state-warn-primary); }
-
-.loom-badge {
-  flex: none; font-size: 11px; line-height: 1.5;
-  border-radius: 999px; padding: 1px 8px;
-  border: 1px solid var(--dsw-alias-border-l2);
-  color: var(--dsw-alias-label-secondary);
-}
-.loom-badge-warn { border-color: var(--dsw-alias-state-warn-primary); color: var(--dsw-alias-state-warn-primary); }
 
 .loom-empty {
   display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 44px 24px; text-align: center;
-  border: 1px dashed var(--dsw-alias-border-l1); border-radius: 12px;
+  padding: 48px 24px; text-align: center;
+  border: 0.5px dashed var(--dsw-alias-border-l3); border-radius: 16px;
 }
-.loom-empty-title { font-size: 14px; font-weight: 600; }
-.loom-empty-hint { color: var(--dsw-alias-label-secondary); font-size: 12.5px; max-width: 42ch; }
+.loom-empty-title { font-size: 15px; font-weight: 500; }
+.loom-empty-hint { color: var(--dsw-alias-label-secondary); max-width: 46ch; }
 
-.loom-preflight { display: flex; flex-direction: column; gap: 16px; border-top: 1px solid var(--dsw-alias-border-l1); padding: 16px; background: var(--dsw-alias-bg-layer-2); }
-.loom-preflight-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.loom-preflight-title { font-size: 13px; font-weight: 600; }
-.loom-boundary { display: flex; gap: 8px; align-items: flex-start; color: var(--dsw-alias-label-secondary); font-size: 12.5px; }
-.loom-section { display: flex; flex-direction: column; gap: 6px; }
-.loom-section-title { font-size: 12.5px; font-weight: 600; display: flex; align-items: center; gap: 8px; }
-.loom-section-title.loom-warn-text { color: var(--dsw-alias-state-warn-primary); }
-.loom-item { display: flex; flex-direction: column; gap: 1px; padding: 5px 0; }
-.loom-item + .loom-item { border-top: 1px solid var(--dsw-alias-border-l1); }
-.loom-item-name { font-size: 12.5px; font-weight: 600; }
-.loom-item-name.loom-warn-text { color: var(--dsw-alias-state-warn-primary); }
-.loom-src { color: var(--dsw-alias-label-secondary); font-size: 12px; word-break: break-all; }
-.loom-muted { color: var(--dsw-alias-label-secondary); font-size: 12.5px; }
-.loom-warn-text { color: var(--dsw-alias-state-warn-primary); }
-.loom-pre {
-  white-space: pre-wrap; font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 11.5px; line-height: 1.55;
-  background: var(--dsw-alias-bg-base);
-  border: 1px solid var(--dsw-alias-border-l1);
-  padding: 10px 12px; border-radius: 8px; max-height: 260px; overflow: auto;
-}
-
-.loom-overlay {
-  position: fixed; inset: 0; z-index: 9999;
-  background: color-mix(in srgb, #000 48%, transparent);
-  display: flex; align-items: center; justify-content: center; padding: 24px;
-}
-.loom-modal {
-  background: var(--dsw-alias-bg-overlay);
-  color: var(--dsw-alias-label-primary);
-  border: 1px solid var(--dsw-alias-border-l1);
-  border-radius: 14px; padding: 20px;
-  width: min(620px, 100%); max-height: 84vh; overflow-y: auto;
+.loom-preflight {
   display: flex; flex-direction: column; gap: 16px;
-  box-shadow: 0 18px 48px color-mix(in srgb, #000 32%, transparent);
+  padding: 16px;
+  border-top: 0.5px solid var(--dsw-alias-border-l3);
+  background: var(--dsw-alias-bg-layer-2);
 }
-.loom-modal-title { font-size: 15px; font-weight: 600; }
-.loom-field { display: flex; flex-direction: column; gap: 6px; }
-.loom-field > label { font-size: 12.5px; font-weight: 600; }
-.loom-input {
-  font: inherit; font-size: 13px; padding: 7px 10px;
-  border-radius: 8px; border: 1px solid var(--dsw-alias-border-l1);
-  background: var(--dsw-alias-bg-base); color: var(--dsw-alias-label-primary);
+.loom-preflight-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.loom-boundary { color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px; }
+
+.loom-section { display: flex; flex-direction: column; gap: 6px; }
+.loom-section-title {
+  font-size: 13px; line-height: 20px; font-weight: 500;
+  display: flex; align-items: center; gap: 6px;
 }
-.loom-input:focus { outline: none; border-color: var(--dsw-alias-brand-primary); }
+.loom-section-title.loom-warn { color: var(--dsw-alias-state-warn-primary); }
+.loom-row { display: flex; align-items: baseline; gap: 8px; font-size: 13px; line-height: 20px; }
+.loom-row + .loom-row { margin-top: 2px; }
+.loom-src {
+  color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px;
+  word-break: break-all;
+}
+.loom-muted { color: var(--dsw-alias-label-secondary); font-size: 13px; }
+.loom-warn { color: var(--dsw-alias-state-warn-primary); }
+
+.loom-results { display: flex; flex-direction: column; gap: 12px; }
+.loom-pre {
+  white-space: pre-wrap;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 12px; line-height: 18px;
+  background: var(--dsw-alias-bg-base);
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  padding: 10px 12px; border-radius: 8px;
+  max-height: 260px; overflow: auto;
+}
+
+.loom-field { display: flex; flex-direction: column; gap: 8px; }
+.loom-field-label { font-size: 13px; font-weight: 500; }
+/* The Input atom owns its own chrome; only the width is local. */
+.loom-input { width: 100%; }
 .loom-picker {
   display: flex; flex-direction: column;
-  border: 1px solid var(--dsw-alias-border-l1); border-radius: 10px; overflow: hidden;
-  max-height: 320px; overflow-y: auto;
+  border: 0.5px solid var(--dsw-alias-border-l3);
+  border-radius: 12px; overflow: hidden;
+  max-height: 300px; overflow-y: auto;
 }
-.loom-pick { display: flex; align-items: center; gap: 10px; padding: 9px 12px; font-size: 12.5px; }
-.loom-pick + .loom-pick { border-top: 1px solid var(--dsw-alias-border-l1); }
-.loom-check { display: flex; align-items: center; gap: 7px; cursor: pointer; }
-.loom-actions { display: flex; justify-content: flex-end; gap: 8px; }
+.loom-pick { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 13px; }
+.loom-pick + .loom-pick { border-top: 0.5px solid var(--dsw-alias-border-l3); }
+.loom-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 `;
 function installStyles() {
   const id = "loom-styles";
@@ -285,7 +270,11 @@ function PreflightPanel({ plan, t, onRefresh, busy }) {
     }
   }, [plan, t]);
   if (plan === void 0) {
-    return h("div", { className: "loom-preflight" }, h("div", { className: "loom-muted" }, t("running")));
+    return h(
+      "div",
+      { className: "loom-preflight" },
+      h("div", { className: "loom-muted" }, t("running"))
+    );
   }
   return h(
     "div",
@@ -293,68 +282,77 @@ function PreflightPanel({ plan, t, onRefresh, busy }) {
     h(
       "div",
       { className: "loom-preflight-head" },
-      h("span", { className: "loom-preflight-title" }, t("preflight")),
-      h("button", { type: "button", className: "loom-btn loom-btn-quiet", onClick: onRefresh, disabled: busy }, t("refresh"))
+      h("span", { className: "loom-section-title" }, t("preflight")),
+      h(Button, { variant: "ghost", size: "sm", onClick: onRefresh, disabled: busy }, t("refresh"))
     ),
+    // The write boundary is stated, not implied.
     h("div", { className: "loom-boundary" }, plan.writeBoundary.summary),
-    // Skills, each with the folder that provides it.
     h(
       "div",
-      { className: "loom-item" },
-      h("div", { className: "loom-item-name" }, `${t("skills")}\uFF08${plan.skills.length}\uFF09`),
-      plan.skills.length === 0 ? h("div", { className: "loom-muted" }, t("noSkills")) : plan.skills.map((skill) => h(
+      { className: "loom-results" },
+      h(
         "div",
-        { key: `${skill.workspaceId}:${skill.name}`, className: "loom-item" },
-        h("div", null, skill.name),
-        h("div", { className: "loom-src" }, `${t("from")} ${skill.workspaceId} \u2014 ${skill.path}`)
-      ))
-    ),
-    // Collisions are surfaced, never hidden.
-    plan.collisions.length > 0 && h(
-      "div",
-      { className: "loom-item" },
-      h("div", { className: "loom-item-name loom-warn-text" }, `${t("collisions")}\uFF08${plan.collisions.length}\uFF09`),
-      h("div", { className: "loom-muted" }, t("collisionHint")),
-      plan.collisions.map((collision) => h(
-        "div",
-        { key: collision.name, className: "loom-item" },
-        h("div", null, collision.name),
-        h("div", { className: "loom-src" }, `${t("winner")}\uFF1A${collision.winner.workspaceId}`),
-        collision.shadowed.map((shadowed) => h(
+        { className: "loom-section" },
+        h("div", { className: "loom-section-title" }, `${t("skills")} \xB7 ${plan.skills.length}`),
+        plan.skills.length === 0 ? h("div", { className: "loom-muted" }, t("noSkills")) : plan.skills.map((skill) => h(
           "div",
-          { key: shadowed.workspaceId, className: "loom-src loom-warn-text" },
-          `${t("shadowed")}\uFF1A${shadowed.workspaceId}`
+          { key: `${skill.workspaceId}:${skill.name}` },
+          h("div", { className: "loom-row" }, h("span", null, skill.name)),
+          h("div", { className: "loom-src" }, `${t("from")} ${skill.workspaceId} \u2014 ${skill.path}`)
         ))
-      ))
-    ),
-    h(
-      "div",
-      { className: "loom-item" },
-      h("div", { className: "loom-item-name" }, `${t("instructions")}\uFF08${plan.instructions.length}\uFF09`),
-      plan.instructions.length === 0 ? h("div", { className: "loom-muted" }, t("noInstructions")) : plan.instructions.map((instruction) => h(
+      ),
+      // Collisions are surfaced, never hidden.
+      plan.collisions.length > 0 && h(
         "div",
-        { key: instruction.path, className: "loom-src" },
-        `${instruction.workspaceId} \u2014 ${instruction.path}\uFF08${instruction.bytes} B\uFF09`
-      ))
-    ),
-    // The silent folders — the headline diagnostic.
-    plan.silent.length > 0 && h(
-      "div",
-      { className: "loom-item" },
-      h("div", { className: "loom-item-name loom-warn-text" }, `${t("silentFolders")}\uFF08${plan.silent.length}\uFF09`),
-      h("div", { className: "loom-muted" }, t("silentHint")),
-      plan.silent.map((entry, index) => h(
+        { className: "loom-section" },
+        h("div", { className: "loom-section-title loom-warn" }, `${t("collisions")} \xB7 ${plan.collisions.length}`),
+        h("div", { className: "loom-muted" }, t("collisionHint")),
+        plan.collisions.map((collision) => h(
+          "div",
+          { key: collision.name },
+          h(
+            "div",
+            { className: "loom-row" },
+            h("span", null, collision.name),
+            h(Tag, { tone: "success" }, `${t("winner")} ${collision.winner.workspaceId}`)
+          ),
+          collision.shadowed.map((shadowed) => h(
+            "div",
+            { key: shadowed.workspaceId, className: "loom-row" },
+            h(Tag, { tone: "warning" }, `${t("shadowed")} ${shadowed.workspaceId}`)
+          ))
+        ))
+      ),
+      h(
         "div",
-        { key: `${entry.workspaceId}-${index}`, className: "loom-item" },
-        h("div", null, entry.workspaceId),
-        h("div", { className: "loom-src" }, entry.detail)
-      ))
+        { className: "loom-section" },
+        h("div", { className: "loom-section-title" }, `${t("instructions")} \xB7 ${plan.instructions.length}`),
+        plan.instructions.length === 0 ? h("div", { className: "loom-muted" }, t("noInstructions")) : plan.instructions.map((instruction) => h(
+          "div",
+          { key: instruction.path, className: "loom-src" },
+          `${instruction.workspaceId} \u2014 ${instruction.path} (${instruction.bytes} B)`
+        ))
+      ),
+      // The silent folders — the headline diagnostic.
+      plan.silent.length > 0 && h(
+        "div",
+        { className: "loom-section" },
+        h("div", { className: "loom-section-title loom-warn" }, `${t("silentFolders")} \xB7 ${plan.silent.length}`),
+        h("div", { className: "loom-muted" }, t("silentHint")),
+        plan.silent.map((entry, index) => h(
+          "div",
+          { key: `${entry.workspaceId}-${index}` },
+          h(
+            "div",
+            { className: "loom-row" },
+            h(StateDot, { state: "warning" }),
+            h("span", null, entry.workspaceId)
+          ),
+          h("div", { className: "loom-src" }, entry.detail)
+        ))
+      )
     ),
-    h(
-      "div",
-      { className: "loom-actions" },
-      h("button", { type: "button", className: "loom-btn", onClick: copy }, copied ? t("copied") : t("copyPlan"))
-    )
+    h(Button, { variant: "outline", size: "sm", onClick: copy }, copied ? t("copied") : t("copyPlan"))
   );
 }
 function renderPlanText(plan, t) {
@@ -410,70 +408,71 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
     });
     onClose();
   };
-  return ReactDOM.createPortal(
+  return h(
+    Modal,
+    {
+      open: true,
+      onClose,
+      title: project ? t("edit") : t("newProject"),
+      closeLabel: t("cancel"),
+      footer: h(
+        React.Fragment,
+        null,
+        h(Button, { variant: "outline", onClick: onClose }, t("cancel")),
+        h(Button, { variant: "primary", onClick: save }, t("save"))
+      )
+    },
     h(
       "div",
-      { className: "loom-overlay", onMouseDown: (event) => {
-        if (event.target === event.currentTarget) onClose();
-      } },
+      { className: "loom-field" },
+      h("label", { className: "loom-field-label", htmlFor: "loom-title" }, t("projectName")),
+      h(Input, {
+        id: "loom-title",
+        className: "loom-input",
+        value: title,
+        maxLength: 80,
+        onChange: (event) => {
+          setTitle(event.target.value);
+          setError("");
+        }
+      })
+    ),
+    h(
+      "div",
+      { className: "loom-field" },
+      h("label", { className: "loom-field-label" }, t("folderPicker")),
+      h("div", { className: "loom-muted" }, t("folderPickerHint")),
       h(
         "div",
-        { className: "loom-modal", role: "dialog", "aria-modal": true },
-        h("div", { className: "loom-modal-title" }, project ? t("edit") : t("newProject")),
-        h(
+        { className: "loom-picker" },
+        workspaces.map((workspace) => h(
           "div",
-          { className: "loom-field" },
-          h("label", null, t("projectName")),
-          h("input", { className: "loom-input", value: title, maxLength: 80, onChange: (event) => {
-            setTitle(event.target.value);
-            setError("");
-          } })
-        ),
-        h(
-          "div",
-          { className: "loom-field" },
-          h("label", null, t("folderPicker")),
-          h("div", { className: "loom-muted" }, t("folderPickerHint")),
+          { key: workspace.workspaceId, className: "loom-pick" },
           h(
-            "div",
-            { className: "loom-picker" },
-            workspaces.map((workspace) => h(
-              "div",
-              { key: workspace.workspaceId, className: "loom-pick" },
-              h(
-                "label",
-                { className: "loom-check" },
-                h("input", { type: "checkbox", checked: selected.has(workspace.workspaceId), onChange: () => toggle(workspace.workspaceId) }),
-                h("span", { className: "loom-member-name" }, workspace.title)
-              ),
-              h("span", { className: "loom-member-path", title: workspace.path }, workspace.path),
-              // Choosing a starting folder is a per-project preference, not a
-              // rank: it never privileges one folder during discovery.
-              h(
-                "label",
-                { className: "loom-check", title: t("defaultStart") },
-                h("input", {
-                  type: "radio",
-                  name: "loom-default",
-                  checked: defaultId === workspace.workspaceId,
-                  disabled: !selected.has(workspace.workspaceId),
-                  onChange: () => setDefaultId(workspace.workspaceId)
-                }),
-                h("span", { className: "loom-muted" }, t("defaultStart"))
-              )
-            ))
+            "label",
+            { className: "loom-check" },
+            h("input", { type: "checkbox", checked: selected.has(workspace.workspaceId), onChange: () => toggle(workspace.workspaceId) }),
+            h("span", { className: "loom-member-name" }, workspace.title)
+          ),
+          h("span", { className: "loom-member-path", title: workspace.path }, workspace.path),
+          // Choosing a starting folder is a per-project preference, not a
+          // rank: it never privileges one folder during discovery.
+          h(
+            "label",
+            { className: "loom-check", title: t("defaultStart") },
+            h("input", {
+              type: "radio",
+              name: "loom-default",
+              checked: defaultId === workspace.workspaceId,
+              disabled: !selected.has(workspace.workspaceId),
+              onChange: () => setDefaultId(workspace.workspaceId)
+            }),
+            h("span", { className: "loom-muted" }, t("defaultStart"))
           )
-        ),
-        error.length > 0 && h("div", { className: "loom-warn-text" }, error),
-        h(
-          "div",
-          { className: "loom-actions" },
-          h("button", { type: "button", className: "loom-btn", onClick: onClose }, t("cancel")),
-          h("button", { type: "button", className: "loom-btn", onClick: save }, t("save"))
-        )
+        ))
       )
     ),
-    document.body
+    error.length > 0 && h("div", { className: "loom-warn" }, error)
   );
 }
 function LoomPanel({ bridge, workspaces, t }) {
@@ -546,18 +545,18 @@ function LoomPanel({ bridge, workspaces, t }) {
           "div",
           { className: "loom-head-text" },
           h("h1", { className: "loom-h1" }, t("projects")),
-          h("div", { className: "loom-sub" }, t("subtitle"))
+          h("p", { className: "loom-sub" }, t("subtitle"))
         ),
-        h("button", { type: "button", className: "loom-btn loom-btn-primary", onClick: () => setEditing({}) }, t("newProject"))
+        h(Button, { variant: "primary", onClick: () => setEditing({}) }, t("newProject"))
       ),
-      unsupported && h("div", { className: "loom-warn-text" }, t("unsupported")),
-      loadError.length > 0 && h("div", { className: "loom-warn-text" }, interpolate(t("loadFailed"), { message: loadError })),
+      unsupported && h("div", { className: "loom-warn" }, t("unsupported")),
+      loadError.length > 0 && h("div", { className: "loom-warn" }, interpolate(t("loadFailed"), { message: loadError })),
       projects.length === 0 ? h(
         "div",
         { className: "loom-empty" },
         h("div", { className: "loom-empty-title" }, t("emptyTitle")),
         h("div", { className: "loom-empty-hint" }, t("emptyHint")),
-        h("button", { type: "button", className: "loom-btn loom-btn-primary", onClick: () => setEditing({}) }, t("newProject"))
+        h(Button, { variant: "outline", onClick: () => setEditing({}) }, t("newProject"))
       ) : projects.map((project) => h(
         "div",
         { key: project.id, className: "loom-card" },
@@ -568,14 +567,14 @@ function LoomPanel({ bridge, workspaces, t }) {
             "div",
             { className: "loom-card-title" },
             h("span", { className: "loom-name" }, project.title),
-            h("span", { className: "loom-badge" }, interpolate(t("memberCount"), { count: project.members.length }))
+            h(Tag, null, interpolate(t("memberCount"), { count: project.members.length }))
           ),
           h(
             "div",
             { className: "loom-card-actions" },
-            h("button", { type: "button", className: "loom-btn", onClick: () => runPreflight(project.id), disabled: busy }, t("preflight")),
-            h("button", { type: "button", className: "loom-btn loom-btn-quiet", onClick: () => setEditing(project) }, t("edit")),
-            h("button", { type: "button", className: "loom-btn loom-btn-quiet", onClick: () => deleteProject(project.id) }, t("delete"))
+            h(Button, { variant: "outline", size: "sm", onClick: () => runPreflight(project.id), disabled: busy }, t("preflight")),
+            h(Button, { variant: "ghost", size: "sm", onClick: () => setEditing(project) }, t("edit")),
+            h(Button, { variant: "ghost", size: "sm", onClick: () => deleteProject(project.id) }, t("delete"))
           )
         ),
         // Every member is listed, including the ones that contribute
@@ -587,14 +586,11 @@ function LoomPanel({ bridge, workspaces, t }) {
           project.members.map((member) => h(
             "div",
             { key: member.workspaceId, className: "loom-member" },
-            h("span", {
-              className: member.missing === true ? "loom-dot loom-dot-warn" : "loom-dot",
-              title: member.missing === true ? t("missingHint") : void 0
-            }),
+            h(StateDot, { state: member.missing === true ? "warning" : "done" }),
             h("span", { className: "loom-member-name" }, member.workspaceId),
             h("span", { className: "loom-member-path", title: member.path }, member.path ?? ""),
-            h("span", { className: "loom-badge" }, roleLabel(t, member.role)),
-            member.missing === true && h("span", { className: "loom-badge loom-badge-warn" }, t("missing"))
+            h(Tag, { tone: member.role === "readonly" ? "quiet" : "neutral" }, roleLabel(t, member.role)),
+            member.missing === true && h(Tag, { tone: "warning" }, t("missing"))
           ))
         ),
         plan !== void 0 && plan.projectId === project.id && h(PreflightPanel, {
@@ -632,26 +628,14 @@ function LoomPanelHost({ bridge }) {
 }
 function LoomIcon({ size, active }) {
   const edge = typeof size === "number" ? size : 16;
-  return h(
-    "svg",
-    {
-      width: edge,
-      height: edge,
-      viewBox: "0 0 24 24",
-      fill: "none",
-      stroke: "currentColor",
-      strokeWidth: 1.7,
-      strokeLinecap: "round",
-      strokeLinejoin: "round",
-      "aria-hidden": "true",
-      focusable: "false",
-      style: { opacity: active === false ? 0.7 : 1 }
-    },
-    h("path", { d: "M4 8.5h16" }),
-    h("path", { d: "M4 15.5h16" }),
-    h("path", { d: "M8.5 4v16" }),
-    h("path", { d: "M15.5 4v16" })
-  );
+  return h("span", {
+    style: {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      opacity: active === false ? 0.7 : 1
+    }
+  }, h(IconFolderOpenOutline16, { size: edge }));
 }
 function apply(ctx) {
   ctx.effect(installStyles, "dsh-loom: styles");

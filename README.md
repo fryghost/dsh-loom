@@ -234,6 +234,23 @@ Client (src/client.cjs)
 
 `test/client-contract.test.cjs` 固化了这条约束：一旦有人把注册改回 `sidebar.workspaces`，测试会直接失败。
 
+### 界面直接建在 DSH 的设计系统上
+
+客户端不自己写按钮、标签、状态点、弹窗，而是 require 平台模块 `@deepseek-ai/dsh-client-ui-primitives`——**和系统自带 UI 用的是同一批原子组件**：
+
+| 用途 | 原子 |
+|---|---|
+| 所有按钮 | `Button`（胶囊 r18，h36／紧凑 h28） |
+| 计数／角色／失联标记 | `Tag`（11px 只读胶囊，按语义取 tone） |
+| 成员状态 | `StateDot`（done／warning／ongoing／error／idle） |
+| 新建／编辑弹窗 | `Modal`（r24 + 遮罩模糊，自带 Esc 关闭） |
+| 项目名输入 | `Input` |
+| 侧边栏图标 | `IconFolderOpenOutline16`（自带 16px 图标族） |
+
+这一条是有代价换来的：最初我手写了矩形 8px 圆角、13px 字的按钮和徽章，而 DSH 的语言是 **14px/22px 正文 + 胶囊按钮 r18/h36 + 0.5px 发丝边框 + r24 弹窗**，所以那版看起来像个外来控件。
+
+因为它在 `PLATFORM_MODULES` 里，构建时保持 external 即可共享宿主的同一实例与已加载样式，不会打进第二份。`test/client-contract.test.cjs` 同时锁住这一点：**一旦有人退回手写控件，测试会失败**。
+
 ## 开发
 
 ```bash

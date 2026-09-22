@@ -27,6 +27,7 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 
 const CLIENT = join(__dirname, '..', 'src', 'client.cjs');
+const BUILD = join(__dirname, '..', 'build.mjs');
 
 /** Remove comments so a mention in prose is not read as a call. */
 function stripComments(text) {
@@ -90,4 +91,36 @@ test('registers a sidebar entry whose id addresses its own main panel', () => {
 test('the sidebar label follows the active locale without re-registering', () => {
   assert.match(code, /label:\s*\(\)\s*=>/, 'a thunk label is re-read per projection');
   assert.match(code, /getLocale\(\)/, 'the label must read the active locale');
+});
+
+/*
+ * Design-system conformance.
+ *
+ * The panel first shipped with hand-rolled buttons, badges, and status dots:
+ * rectangular 8px-radius controls at 13px text, against a shell whose language
+ * is 14px/22px text with capsule r18/h36 buttons and 11px tag capsules. It read
+ * as a foreign widget. The fix is to consume the shipped atoms, whose geometry
+ * comes from the Figma component and whose styling is token-only — not to
+ * approximate them locally.
+ */
+test('the client builds on the shell design system, not look-alike atoms', () => {
+  assert.match(code, /require\(\s*'@deepseek-ai\/dsh-client-ui-primitives'\s*\)/,
+    'controls must be the shipped atoms');
+  for (const atom of ['Button', 'Tag', 'StateDot', 'Modal', 'Input']) {
+    assert.match(code, new RegExp(`\\b${atom}\\b`), `must use the ${atom} atom`);
+  }
+});
+
+test('the panel does not re-implement control geometry', () => {
+  for (const local of ['loom-btn', 'loom-badge', 'loom-dot', 'loom-modal', 'loom-overlay']) {
+    assert.doesNotMatch(code, new RegExp(`\\.${local}\\b`),
+      `${local} is a hand-rolled control; the design system owns that geometry`);
+  }
+});
+
+test('the design system stays external so the shell instance is shared', () => {
+  const buildScript = stripComments(readFileSync(BUILD, 'utf8'));
+  assert.match(buildScript, /@deepseek-ai\/dsh-client-ui-primitives/,
+    'build.mjs must keep the platform module external rather than bundling a second copy');
+  assert.match(buildScript, /react-dom/, 'react and react-dom are platform modules too');
 });
