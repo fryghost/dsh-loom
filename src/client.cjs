@@ -480,19 +480,35 @@ const name = 'dsh-loom';
 const inject = ['slots', 'locale', 'workspaces', 'connection'];
 
 /**
- * The panel component, built once with the services it needs.
+ * Bind the panel to the seats the slot machinery provides.
  *
- * `ctx.workspaces` is a client-side store, not the host registry: it exposes
- * `useWorkspaces` for reactive reads. The panel subscribes there rather than
- * snapshotting a list at registration time, so a folder added later appears
- * without a reload.
+ * The slot hands a component two standard props: `useWorkspaces` (the client
+ * workspace store hook) and `t` (synthesized from the `locale` namespace named
+ * on the registration). Reading them from props is required, not stylistic:
+ * `ctx.locale` exposes `register`/`getLocale`/`setLocale` and has NO `t`, so
+ * reaching for `ctx.locale.t(...)` throws on the first render.
+ *
+ * That distinction is expensive here. A slot entry that crashes mid-render is
+ * ABDICATED — `SlotCore.reportEntryError` retires it from its cell and the
+ * shipped `ui-workspace` browser is rendered instead. The panel then simply
+ * never appears, with no visible error, which is exactly how this failed once.
+ * So the seat check is defensive: a missing seat renders nothing rather than
+ * throwing.
  */
-function LoomPanelHost({ ctx, bridge }) {
-  return function LoomPanelBound() {
-    const state = ctx.workspaces.useWorkspaces(snapshot => snapshot);
-    const items = state?.items ?? [];
-    const t = (key, values) => interpolate(ctx.locale.t(NS, key), values ?? {});
-    return h(LoomPanel, { bridge, workspaces: items, t });
+function LoomPanelHost({ bridge }) {
+  /** Mounted only once the seat is known to exist, so the hook is unconditional here. */
+  function LoomPanelSeated({ useWorkspaces, t }) {
+    const state = useWorkspaces(snapshot => snapshot);
+    return h(LoomPanel, { bridge, workspaces: state?.items ?? [], t });
+  }
+
+  return function LoomPanelBound(props) {
+    const { useWorkspaces, t } = props ?? {};
+    if (typeof useWorkspaces !== 'function') return null;
+    return h(LoomPanelSeated, {
+      useWorkspaces,
+      t: typeof t === 'function' ? t : key => key,
+    });
   };
 }
 
@@ -501,7 +517,7 @@ function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, dictionaries), 'dsh-loom: dictionaries');
 
   const bridge = createBridge(ctx);
-  const Panel = LoomPanelHost({ ctx, bridge });
+  const Panel = LoomPanelHost({ bridge });
 
   ctx.slots.inject('sidebar.workspaces', () => ctx.slots.register({
     name: 'sidebar.workspaces',

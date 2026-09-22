@@ -476,19 +476,25 @@ function LoomPanel({ bridge, workspaces, t }) {
 }
 var name = "dsh-loom";
 var inject = ["slots", "locale", "workspaces", "connection"];
-function LoomPanelHost({ ctx, bridge }) {
-  return function LoomPanelBound() {
-    const state = ctx.workspaces.useWorkspaces((snapshot) => snapshot);
-    const items = state?.items ?? [];
-    const t = (key, values) => interpolate(ctx.locale.t(NS, key), values ?? {});
-    return h(LoomPanel, { bridge, workspaces: items, t });
+function LoomPanelHost({ bridge }) {
+  function LoomPanelSeated({ useWorkspaces, t }) {
+    const state = useWorkspaces((snapshot) => snapshot);
+    return h(LoomPanel, { bridge, workspaces: state?.items ?? [], t });
+  }
+  return function LoomPanelBound(props) {
+    const { useWorkspaces, t } = props ?? {};
+    if (typeof useWorkspaces !== "function") return null;
+    return h(LoomPanelSeated, {
+      useWorkspaces,
+      t: typeof t === "function" ? t : (key) => key
+    });
   };
 }
 function apply(ctx) {
   ctx.effect(installStyles, "dsh-loom: styles");
   ctx.effect(() => ctx.locale.register(NS, dictionaries), "dsh-loom: dictionaries");
   const bridge = createBridge(ctx);
-  const Panel = LoomPanelHost({ ctx, bridge });
+  const Panel = LoomPanelHost({ bridge });
   ctx.slots.inject("sidebar.workspaces", () => ctx.slots.register({
     name: "sidebar.workspaces",
     priority: -100,
