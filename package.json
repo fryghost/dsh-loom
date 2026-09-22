@@ -1,0 +1,79 @@
+{
+  "name": "dsh-loom",
+  "version": "0.1.0",
+  "description": "Weave many folders into one DSH project context — with a preflight that shows exactly what loads, from where, and what collides.",
+  "type": "module",
+  "main": "./src/index.js",
+  "exports": {
+    ".": "./src/index.js",
+    "./client": "./dist/client.js",
+    "./package.json": "./package.json"
+  },
+  "files": [
+    "dist/client.js",
+    "src/index.js",
+    "src/host/*.js",
+    "src/core/*.cjs",
+    "cordis.patch.yml",
+    "README.md",
+    "LICENSE",
+    "docs/*.md"
+  ],
+  "scripts": {
+    "build": "node build.mjs",
+    "check": "node --check src/index.js && node --check src/host/manifest-store.js && node --check src/host/skill-provider.js && node --check src/core/manifest.cjs && node --check src/core/skill-roots.cjs && node --check src/core/frontmatter.cjs && node --check src/core/context-plan.cjs",
+    "test": "node --test",
+    "verify": "npm run check && npm run build && npm test"
+  },
+  "engines": {
+    "node": ">=20"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
+    "client": {
+      "platform": "web",
+      "inject": [
+        "@deepseek-ai/dsh-client-runtime",
+        "@deepseek-ai/dsh-client-locale",
+        "@deepseek-ai/dsh-client-ui-slots",
+        "@deepseek-ai/dsh-client-ui-sidebar"
+      ]
+    }
+  },
+  "keywords": [
+    "dsh",
+    "deepseek-harness",
+    "projects",
+    "workspace",
+    "skills",
+    "context",
+    "preflight",
+    "provenance"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fryghost/dsh-loom.git"
+  },
+  "homepage": "https://github.com/fryghost/dsh-loom#readme",
+  "bugs": {
+    "url": "https://github.com/fryghost/dsh-loom/issues"
+  },
+  "devDependencies": {
+    "esbuild": "^0.25.0"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0"
+  },
+  "peerDependenciesMeta": {
+    "react": {
+      "optional": true
+    },
+    "react-dom": {
+      "optional": true
+    }
+  },
+  "license": "MIT"
+}

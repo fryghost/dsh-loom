@@ -1,0 +1,12 @@
+node_modules/
+*.tgz
+*.log
+.DS_Store
+Thumbs.db
+coverage/
+__pycache__/
+
+# dist/client.js is intentionally NOT ignored: the client half is what the
+# browser loads, and a `dsh plugin add link:` install must work without a
+# separate build step. Rebuild it with `npm run build` before committing
+# changes to src/client.cjs.
