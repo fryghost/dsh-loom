@@ -91,11 +91,61 @@ Loom 不是它的复刻，而是换了一条实现路线：**不去改 cwd，而
 
 ## 安装
 
+DSH 的插件按 **profile** 安装。Desktop 和 Web 是两个独立 profile，需要分别安装：
+
+| 你在用 | `--profile` |
+|---|---|
+| 浏览器里的 DSH Web UI | `web` |
+| DSH Desktop 应用 | `desktop` |
+
+### 从 GitHub 安装（推荐）
+
 ```bash
+dsh plugin --profile web add github:fryghost/dsh-loom
+```
+
+不需要先克隆，也不需要构建：客户端半边 `dist/client.js` 已随仓库提交。
+
+### 从本地检出安装（开发用）
+
+先克隆，再用**绝对路径**：
+
+```bash
+git clone https://github.com/fryghost/dsh-loom.git
+cd dsh-loom
 dsh plugin --profile web add link:/absolute/path/to/dsh-loom
 ```
 
-安装后完整退出并重启对应 profile。
+Windows 上绝对路径要写成 Windows 形式（正斜杠或双反斜杠）：
+
+```powershell
+dsh plugin --profile web add link:C:/path/to/dsh-loom
+```
+
+### 重启
+
+安装后**完整退出并重启**对应 profile，新插件才会挂载。
+
+### 怎么确认装上了
+
+`dsh plugin` 会把插件写进 profile 的 `package.json` 两处：`dependencies` 里出现依赖，同时因为 Loom 声明了 `dsh.bundle.patch`，它会自动加入 `dsh.profile.bundles` 成为一层。
+
+```bash
+# Windows
+notepad %USERPROFILE%\.dsh\profiles\web\package.json
+# macOS / Linux
+cat ~/.dsh/profiles/web/package.json
+```
+
+`dsh.profile.bundles` 里应出现 `"dsh-loom"`。如果只出现在 `dependencies` 而没进 `bundles`，说明包的 `dsh.bundle` 没被识别——插件不会挂载。
+
+### 卸载
+
+```bash
+dsh plugin --profile web remove dsh-loom
+```
+
+会同时从 `dependencies` 和 `dsh.profile.bundles` 移除。项目清单 `$DSH_HOME/projects/manifest.json` **不会被删除**（它属于你的数据）。
 
 ## 数据与安全
 
@@ -176,6 +226,29 @@ Client (src/client.cjs)
 ```bash
 npm install
 npm run verify   # check + build + test
+```
+
+### 改了 `src/client.cjs` 要记得重建
+
+`dist/client.js` 是**随仓库提交**的构建产物（这样 `dsh plugin add` 免构建即可用）。改了 `src/client.cjs` 之后必须重新构建并一起提交：
+
+```bash
+npm run build
+git add dist/client.js
+```
+
+有 CI 任务专门守这条线（`bundle-freshness`）：它重新构建后比对 `git diff --exit-code dist/client.js`，产物过期会直接失败。
+
+## 测试
+
+```bash
+npm test
+```
+
+其中 `test/dsh-baseline.test.js` 固化的是 **DSH 自身**的行为（软链接能不能聚合、`@` 引用是否拒绝软链接等），不是 Loom 的行为。它需要一份 DSH 源码检出，通过 `DSH_CHECKOUT` 环境变量指定；找不到时这些用例**跳过而非失败**：
+
+```bash
+DSH_CHECKOUT=/path/to/deepseek-harness npm test
 ```
 
 ## 文档
