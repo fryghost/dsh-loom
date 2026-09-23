@@ -147,6 +147,51 @@ dsh plugin --profile web remove dsh-loom
 
 会同时从 `dependencies` 和 `dsh.profile.bundles` 移除。项目清单 `$DSH_HOME/projects/manifest.json` **不会被删除**（它属于你的数据）。
 
+## 怎么用
+
+侧边栏的浏览区被 Loom 接管，分成三段。**一个会话只出现在一段里**，不重复、不漏：
+
+```
+▾ 项目  2                                  +
+  ▾ 厦门TOD璞瑞                    ⋯
+        核对尺寸并推进渲染图      12 小时
+  ▾ dsh-project
+        优化 DSH 项目多文件夹合并插件  11 分钟
+▾ 工作区  7                                +
+  ▾ wecom_workspace                ⋯
+        [WeCom private chat message…    2 小时
+▾ 聊天  4
+      [WeCom private chat message…      15 天
+```
+
+| 段 | 收哪些会话 |
+|---|---|
+| **项目** | 项目成员文件夹下的会话（多成员命中同一会话时去重） |
+| **工作区** | 没有被任何项目认领的工作区的会话 |
+| **聊天** | 任何工作区都没归属的会话（新建、分叉、失联的） |
+
+归档的会话在三段里都不出现；**子代理会话不是这里的会话**——它们挂在父会话的 header 目录下，不属于这个列表。
+
+### 常用动作
+
+| 想做什么 | 怎么做 |
+|---|---|
+| 新建项目 | 「项目」段右侧的 `+` |
+| 改项目成员 / 起始文件夹 | 项目行的 `⋯` → 编辑。**一个文件夹可以同时属于多个项目** |
+| 展开某个项目的全部会话 | 点组名，或「展开其余 N 个会话」（默认显示 4 条） |
+| 在某个文件夹里开新对话 | 组行的 `+` |
+| **看这个项目到底会加载什么** | 项目行的 `⋯` → **上下文预检** |
+| 重命名 / 分支 / 归档会话 | 会话行的 `⋯` |
+| 新建 / 重命名 / 删除工作区 | 「工作区」段右侧的 `+`；工作区行的 `⋯` |
+| 收起整段 | 点段标题 |
+| 搜索 | 顶部搜索框，同时匹配会话标题和组名 |
+
+删除工作区**只移除登记**，不删文件夹、不删会话记录。删除项目只移除分组，同理。
+
+### 起始文件夹是什么
+
+项目可以指定一个「默认起点」——新对话会话从这里开始。它是**偏好，不是等级**：它不会让那个文件夹在技能发现时获得优先权。多文件夹的聚合对每个成员一视同仁，冲突由角色和声明顺序决定（见[设计说明](docs/design.md)）。
+
 ## 数据与安全
 
 - 项目清单：`$DSH_HOME/projects/manifest.json`，**原子写**（临时文件 + rename）。
@@ -208,31 +253,53 @@ Loom 不擅自绕过安全边界，但这条上游路径的收益/成本比明�
 ## 架构
 
 ```
-Host (src/index.js)
-├── manifest-store.js    $DSH_HOME 原子读写 + schema 版本守卫
-├── skill-provider.js    ctx.skills.registerProvider —— 让兄弟文件夹贡献技能
-└── RPC /dsh-loom        getManifest / putManifest / preflight（loopback）
+Host (src/index.js)                     纯 Node，不依赖浏览器
+├── host/manifest-store.js   $DSH_HOME 原子读写 + schema 版本守卫
+├── host/skill-provider.js   ctx.skills.registerProvider —— 让兄弟文件夹贡献技能
+└── RPC /dsh-loom            getManifest / putManifest / preflight / report（loopback）
 
-Client (src/client.cjs)
-├── LoomIcon             侧边栏图标（sidebar.panellist）
-├── LoomPanel            项目列表（main 面板）
-├── ProjectEditor        文件夹多归属编辑（无独占、无主副）
-└── PreflightPanel       上下文预检（技能来源 / 冲突 / 指令 / 写入边界）
+Client (src/client.cjs)                 只贡献一个槽位
+├── LoomSidebarHost          侧边栏浏览器：项目 / 工作区 / 聊天
+├── LoomSidebar              三段树 + 搜索
+├── SessionRow / LoomGroup   会话行（重命名/分支/归档）与组行
+├── ProjectEditor            文件夹多归属编辑（无独占、无主副）
+├── PreflightModal           上下文预检
+└── RowMenu                  统一的行内省略号菜单
+
+src/core/*.cjs                          纯函数，脱离 DSH 与浏览器即可测试
+├── manifest.cjs             schema 校验与迁移
+├── skill-roots.cjs          成员 → 技能根 / 指令候选
+├── frontmatter.cjs          SKILL.md 元信息解析（含 CRLF）
+├── context-plan.cjs         预检计划：来源、冲突、静默文件夹、写入边界
+└── sections.cjs             三段归属（唯一归属）与可见性规则
 ```
 
-核心逻辑全部是纯函数，放在 `src/core/`，可脱离 DSH 独立测试。
+## 界面接入方式
 
-### 为什么 Loom 占用的是「主面板」而不是侧边栏座位
+Loom **只注册一个槽位**：`sidebar.workspaces`，`priority: -100`。这个座位就是侧边栏的浏览区，抢它等于替换系统自带的工作区浏览器——**这次是应该的**，因为三段里**包含了**原生工作区分组。
 
-侧边栏里的 `sidebar.workspaces` 是 `kind: "single"` 且标记 `replaceRisk: "shadows-shipped-ui"`——**注册进去等于顶掉系统自带的工作区/会话浏览器**，用户会直接看不到自己的会话列表。
+它**不注册** `sidebar.panellist`，也**不注册** `main`：
 
-所以 Loom 用**加法型**结构：在 `sidebar.panellist` 注册一个图标（`id: 'loom'`），再由同一个 id 寻址 `main`（keyed 槽位，只保留了 `conversation`）里的面板。这样：
+- 项目列表已被侧边栏的「项目」段完全覆盖，单独开面板只是重复；
+- 而 `sidebar.panellist` 的代价是**在全局导航里永久占一行**——对所有会话生效，包括跟项目毫无关系的那些。
 
-- **workspace** —— 原生会话浏览器原样保留；
-- **项目** —— Loom 自己的面板，点侧边栏图标进入；
-- **闲聊** —— `conversation` 完全不受影响。
+唯一"面板能做而侧边栏不能做"的是上下文预检，而那是**针对某个项目的一个动作**，所以它从该项目自己的行菜单打开。
 
-`test/client-contract.test.cjs` 固化了这条约束：一旦有人把注册改回 `sidebar.workspaces`，测试会直接失败。
+这两条都有测试固化（`test/client-contract.test.cjs`）：一旦有人再加回 `sidebar.panellist`／`main`，或把三段改成不包含原生分组，测试会失败。
+
+### 三段树的设计
+
+层级靠**静态信号**区分，不靠悬停变化：
+
+| 层级 | 字号 | 颜色 | 前导字形 |
+|---|---|---|---|
+| 区标题（带分割线） | 12px / 600 + 字距 | `label-tertiary` | 三角 |
+| 组行 | 14px / 500 | `label-primary` | 三角（16px 槽） |
+| 会话行 | 14px / 400 | `label-secondary` | 运行状态点 |
+
+**只有三档字号：12 / 14 / 16**（16 由 `Modal` 原子自带），取自 DSH 原生侧边栏的刻度。
+
+**故意不做悬停字形互换**（图标 ↔ 三角）：指针一进一出字形就在跳，恰好在你要瞄准它的时候，"这是什么"和"收没收起"同时变得不确定。**静止的字形比一个能表达两件事的字形更有价值。** 这一条也写进了 `test/client-contract.test.cjs`。
 
 ### 界面直接建在 DSH 的设计系统上
 
@@ -243,13 +310,19 @@ Client (src/client.cjs)
 | 所有按钮 | `Button`（胶囊 r18，h36／紧凑 h28） |
 | 计数／角色／失联标记 | `Tag`（11px 只读胶囊，按语义取 tone） |
 | 成员状态 | `StateDot`（done／warning／ongoing／error／idle） |
-| 新建／编辑弹窗 | `Modal`（r24 + 遮罩模糊，自带 Esc 关闭） |
-| 项目名输入 | `Input` |
-| 侧边栏图标 | `IconFolderOpenOutline16`（自带 16px 图标族） |
+| 弹窗（编辑／预检／重命名） | `Modal`（r24 + 遮罩模糊，自带 Esc 关闭） |
+| 文本输入 | `Input` |
+| 行内菜单 | `Menu`（锚定 + 传送门） |
 
-这一条是有代价换来的：最初我手写了矩形 8px 圆角、13px 字的按钮和徽章，而 DSH 的语言是 **14px/22px 正文 + 胶囊按钮 r18/h36 + 0.5px 发丝边框 + r24 弹窗**，所以那版看起来像个外来控件。
+这一条是有代价换来的：最初手写了矩形 8px 圆角、13px 字的按钮和徽章，而 DSH 的语言是 **14px/22px 正文 + 胶囊按钮 r18/h36 + 0.5px 发丝边框 + r24 弹窗**，所以那版看起来像个外来控件。
 
 因为它在 `PLATFORM_MODULES` 里，构建时保持 external 即可共享宿主的同一实例与已加载样式，不会打进第二份。`test/client-contract.test.cjs` 同时锁住这一点：**一旦有人退回手写控件，测试会失败**。
+
+### 一个作用域内的 `box-sizing` reset
+
+`.loom-sidebar` 及其所有后代强制 `box-sizing: border-box`。
+
+这不是洁癖：`width: 100%` 在 `content-box` 下算的是内容盒，任何同时有内边距的元素都会**宽出容器**。这个疏漏先后造成了三处可见故障——搜索框溢出、项目名输入框压住下方列表、每个会话行宽 12px 把时间戳推出右边缘并让整列出现横向滚动条。**逐元素打补丁是它反复回来的原因**，所以改成作用域内一次 reset。
 
 ## 开发
 

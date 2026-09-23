@@ -42,14 +42,20 @@ v1 中"主文件夹"决定了新会话的 cwd，因而间接决定了哪些技�
 1. **备份**：复制 `%APPDATA%`/浏览器 profile 中 `dsh-projects` 相关的 localStorage 键（导出为 JSON 即可）。
 2. **转换**：把 v1 数据传给 `migrateFromV1()`，得到 v2 manifest。
 3. **写入**：通过 Loom 的 `putManifest` RPC 端点，或直接写 `$DSH_HOME/projects/manifest.json`。
-4. **校验**：打开预检面板，确认每个项目的成员数量与预期一致。
+4. **校验**：用项目行的 `⋯` → 上下文预检，确认每个项目的成员数量与预期一致。
 5. **保留**：不要删除 v1 的 localStorage 键，降级时仍可回退。
 
 ## 并存
 
-Loom 与 dsh-projects 使用不同的 RPC 通道（`/dsh-loom` vs `/dsh-projects`）与不同的存储位置，**不会互相覆盖**。但两者都会向 `sidebar.workspaces` 槽注册，同时启用会出现两组面板。
+Loom 与 dsh-projects 使用不同的 RPC 通道（`/dsh-loom` vs `/dsh-projects`）与不同的存储位置，**不会互相覆盖对方的数据**。
 
-建议：迁移完成后禁用 dsh-projects。
+但它们**不能同时启用**，而且不是"会出现两组面板"那么简单——两者都注册 `sidebar.workspaces`，且**都用 `priority: -100`**。DSH 的槽位规则是：同一个 cell 在**相同优先级**上只允许一个注册，第二个会直接抛错：
+
+> `single slot "sidebar.workspaces" already has a registration at priority -100 (registered by …) — register at a different priority to shadow it (lowest renders)`
+
+后果取决于加载顺序：后注册的那个插件的槽位贡献被 `slots.inject` 的失败路径回收，**表现为那个插件的侧边栏整体不出现**，且不会有任何可见报错。
+
+建议：迁移完成后**先禁用 dsh-projects**（`dsh plugin --profile web remove dsh-projects`），再启用 Loom。
 
 ## 卸载
 
