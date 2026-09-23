@@ -64,7 +64,6 @@ var {
   Modal,
   Input,
   Menu,
-  IconFolderOpenOutline16,
   IconPlusOutline16,
   IconChevronDownOutline14,
   IconEllipsisOutline16,
@@ -72,11 +71,7 @@ var {
   IconTrashOutline16,
   IconBranchOutline16,
   IconArchiveOutline20,
-  IconListPenOutline16,
-  IconProjectAddOutline16,
-  IconFolderOpen16,
-  IconFolderClose16,
-  IconNewChatOutline16
+  IconListPenOutline16
 } = require("@deepseek-ai/dsh-client-ui-primitives");
 var h = React.createElement;
 var NS = "dsh-loom";
@@ -422,29 +417,21 @@ var STYLES = `
   letter-spacing: .04em;
 }
 .loom-section-title:hover { color: var(--dsw-alias-label-primary); }
-.loom-section-icon { flex: none; display: inline-flex; align-items: center; }
 .loom-section-count { font-weight: 500; letter-spacing: 0; }
 
-/* \u2500\u2500 one glyph slot, two levels, the same swap \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
-   A section and a group each lead with a glyph that says what the thing IS.
-   On hover, and whenever the row is collapsed, that glyph becomes the twisty
-   that says what it DOES.
-   Both levels share this because a section header may only spend ONE glyph on
-   its lead: adding a twisty beside an icon would push the section label right
-   of its own group names, inverting the hierarchy the indent is drawing. */
-.loom-manage { flex: none; display: inline-flex; align-items: center; justify-content: center; }
+/* ONE twisty, always visible.
+   An earlier version swapped a type icon for the twisty on hover. That read as
+   flicker: the glyph changed under the pointer, so the row's identity and its
+   collapsed state were BOTH unclear at the moment you were aiming at it. It
+   also needed an icon per level, and the ones that exist are ambiguous \u2014 a
+   folder with a plus for "projects" reads as "add", and a folder for both
+   \u9879\u76EE and \u5DE5\u4F5C\u533A separates nothing.
+   A glyph that holds still is worth more than one that says two things. */
 .loom-twisty {
-  flex: none; display: none; align-items: center; justify-content: center;
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px;
   transition: transform 150ms var(--ds-ease-in-out);
 }
-/* One 16px slot, so the label does not shift by the 2px difference between a
-   16px icon and a 14px chevron when the swap happens on hover. */
-.loom-manage,
-.loom-twisty { width: 16px; height: 16px; }
-.loom-head:hover .loom-manage,
-.loom-head-collapsed .loom-manage { display: none; }
-.loom-head:hover .loom-twisty,
-.loom-head-collapsed .loom-twisty { display: inline-flex; }
 .loom-twisty-collapsed { transform: rotate(-90deg); }
 
 .loom-group { display: flex; flex-direction: column; }
@@ -934,22 +921,17 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
     h(
       "div",
       {
-        className: open ? "loom-group-head loom-head" : "loom-group-head loom-head loom-head-collapsed",
+        className: "loom-group-head",
         role: "treeitem",
         "aria-expanded": open,
         onClick: () => onToggleCollapse(row.key)
       },
-      // The native idiom: a folder while it is just a folder, the twisty once
-      // you point at it or once it is closed — so the glyph says what the thing
-      // IS at rest and what it DOES on approach.
+      // The twisty lives in the same 16px slot every row uses, which is what
+      // the session list indents to and the guide line aligns under. It stays
+      // put: see the note above on why the hover swap was removed.
       h(
         "span",
         { className: "loom-slot" },
-        h(
-          "span",
-          { className: "loom-manage" },
-          h(open ? IconFolderOpen16 : IconFolderClose16, { size: 16 })
-        ),
         h(
           "span",
           { className: open ? "loom-twisty" : "loom-twisty loom-twisty-collapsed" },
@@ -1102,7 +1084,7 @@ function LoomSidebar({
   });
   const [hiddenSections, setHiddenSections] = React.useState(() => /* @__PURE__ */ new Set());
   const toggleSection = toggle(setHiddenSections);
-  const sectionHead = (id, label, count, action, icon) => {
+  const sectionHead = (id, label, count, action) => {
     const open = !hiddenSections.has(id);
     return h(
       "div",
@@ -1111,14 +1093,11 @@ function LoomSidebar({
         "button",
         {
           type: "button",
-          // One glyph slot: the section's own icon, which becomes the twisty on
-          // hover or once collapsed — the same swap the group rows use.
-          className: open ? "loom-section-title loom-head" : "loom-section-title loom-head loom-head-collapsed",
+          className: "loom-section-title",
           "aria-expanded": open,
           title: label,
           onClick: () => toggleSection(id)
         },
-        h("span", { className: "loom-section-icon loom-manage" }, icon),
         h(
           "span",
           { className: open ? "loom-twisty" : "loom-twisty loom-twisty-collapsed" },
@@ -1156,8 +1135,7 @@ function LoomSidebar({
         title: t("newProject"),
         "aria-label": t("newProject"),
         onClick: onNewProject
-      }, h(IconPlusOutline16, { size: 16 })),
-      h(IconProjectAddOutline16, { size: 16 })
+      }, h(IconPlusOutline16, { size: 16 }))
     ),
     sectionBody("projects", () => projectRows.length === 0 ? h("div", { className: "loom-empty-section" }, t("noProjects")) : projectRows.map((row) => h(LoomGroup, {
       key: row.key,
@@ -1199,17 +1177,10 @@ function LoomSidebar({
         title: t("newWorkspace"),
         "aria-label": t("newWorkspace"),
         onClick: onNewWorkspace
-      }, h(IconPlusOutline16, { size: 16 })),
-      h(IconFolderOpenOutline16, { size: 16 })
+      }, h(IconPlusOutline16, { size: 16 }))
     ),
     sectionBody("workspaces", () => workspaceRows.length === 0 ? h("div", { className: "loom-empty-section" }, t("noWorkspaces")) : workspaceRows.map(group)),
-    sectionHead(
-      "chats",
-      t("sectionChats"),
-      chatSessions.length,
-      null,
-      h(IconNewChatOutline16, { size: 16 })
-    ),
+    sectionHead("chats", t("sectionChats"), chatSessions.length),
     sectionBody("chats", () => chatSessions.length === 0 ? h("div", { className: "loom-empty-section" }, t("noChats")) : h(
       "div",
       { className: "loom-children loom-children-section" },
