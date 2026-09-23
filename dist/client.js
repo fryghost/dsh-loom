@@ -151,7 +151,13 @@ var dictionaries = {
     archive: "\u5F52\u6863",
     sessionActions: "\u4F1A\u8BDD\u64CD\u4F5C",
     renameSession: "\u91CD\u547D\u540D\u4F1A\u8BDD",
-    archiveHint: "\u5F52\u6863\u53EA\u662F\u628A\u5B83\u4ECE\u8FD9\u4E9B\u5217\u8868\u91CC\u6536\u8D77\u6765\uFF0C\u4F1A\u8BDD\u8BB0\u5F55\u4E0D\u4F1A\u5220\u9664\u3002"
+    archiveHint: "\u5F52\u6863\u53EA\u662F\u628A\u5B83\u4ECE\u8FD9\u4E9B\u5217\u8868\u91CC\u6536\u8D77\u6765\uFF0C\u4F1A\u8BDD\u8BB0\u5F55\u4E0D\u4F1A\u5220\u9664\u3002",
+    newWorkspace: "\u65B0\u5EFA\u5DE5\u4F5C\u533A",
+    renameWorkspace: "\u91CD\u547D\u540D\u5DE5\u4F5C\u533A",
+    deleteWorkspace: "\u5220\u9664\u5DE5\u4F5C\u533A",
+    workspaceActions: "\u5DE5\u4F5C\u533A\u64CD\u4F5C",
+    deleteWorkspaceHint: "\u53EA\u79FB\u9664\u8FD9\u4E2A\u5DE5\u4F5C\u533A\u767B\u8BB0\uFF0C\u4E0D\u4F1A\u5220\u9664\u6587\u4EF6\u5939\u6216\u4F1A\u8BDD\u8BB0\u5F55\u3002",
+    pickFolderFailed: "\u6CA1\u6709\u9009\u62E9\u6587\u4EF6\u5939\u3002"
   },
   en: {
     projects: "Projects",
@@ -226,7 +232,13 @@ var dictionaries = {
     archive: "Archive",
     sessionActions: "Session actions",
     renameSession: "Rename session",
-    archiveHint: "Archiving only hides it from these lists; the session log is kept."
+    archiveHint: "Archiving only hides it from these lists; the session log is kept.",
+    newWorkspace: "New workspace",
+    renameWorkspace: "Rename workspace",
+    deleteWorkspace: "Delete workspace",
+    workspaceActions: "Workspace actions",
+    deleteWorkspaceHint: "Removes the registration only; folders and session logs are kept.",
+    pickFolderFailed: "No folder was selected."
   }
 };
 var STYLES = `
@@ -399,16 +411,16 @@ var STYLES = `
 .loom-sidebar {
   display: flex; flex-direction: column;
   height: 100%; overflow-y: auto;
-  padding: 6px 6px 16px;
+  padding: 6px 4px 16px;
   color: var(--dsw-alias-label-primary);
   font-size: 14px; line-height: 20px;
 }
 .loom-search { padding: 0 0 8px; }
 
 /* The three rulers of this tree, all measured from the sidebar's own edge:
-     the section twisty   sits at 6 + 2             =  8px
-     the group slot       starts at 6 + 6           = 12px, centred on 20px
-     the children's guide is placed AT that centre  = 20px
+     the section twisty   sits at 4 + 2             =  6px
+     the group slot       starts at 4 + 6           = 10px, centred on 18px
+     the children's guide is placed AT that centre  = 18px
    Every extra padding between those points was dead space on the left, which
    is what made the collapsed tree look indented for no reason. */
 .loom-section-head { display: flex; align-items: center; gap: 2px; margin-top: 12px; padding: 0; }
@@ -993,8 +1005,30 @@ function sessionTime(summary, t) {
   if (hours < 24) return interpolate(t("hoursAgo"), { count: hours });
   return interpolate(t("daysAgo"), { count: Math.round(hours / 24) });
 }
+function RowMenu({ items, onSelect, label }) {
+  const [open, setOpen] = React.useState(false);
+  return h(Menu, {
+    open,
+    onClose: () => setOpen(false),
+    items,
+    onSelect: (id) => {
+      setOpen(false);
+      onSelect(id);
+    },
+    portal: true,
+    closeOnPointerLeave: true,
+    anchor: h("button", {
+      type: "button",
+      className: "loom-icon-btn",
+      "aria-label": label,
+      onClick: (event) => {
+        event.stopPropagation();
+        setOpen((value) => !value);
+      }
+    }, h(IconEllipsisOutline16, { size: 16 }))
+  });
+}
 function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t }) {
-  const [menuOpen, setMenuOpen] = React.useState(false);
   const title = summary.displayTitle || t("untitled");
   const settled = summary.blank !== true;
   const items = [
@@ -1029,32 +1063,19 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
     settled && h(
       "span",
       { className: "loom-actions" },
-      h(Menu, {
-        open: menuOpen,
-        onClose: () => setMenuOpen(false),
+      h(RowMenu, {
+        label: t("sessionActions"),
         items,
         onSelect: (id) => {
-          setMenuOpen(false);
           if (id === "rename") onRename(summary.id, title);
           if (id === "fork") onFork(summary.id);
           if (id === "archive") onArchive(summary.id);
-        },
-        portal: true,
-        closeOnPointerLeave: true,
-        anchor: h("button", {
-          type: "button",
-          className: "loom-icon-btn",
-          "aria-label": t("sessionActions"),
-          onClick: (event) => {
-            event.stopPropagation();
-            setMenuOpen((value) => !value);
-          }
-        }, h(IconEllipsisOutline16, { size: 16 }))
+        }
       })
     )
   );
 }
-function LoomGroup({ row, actions, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, onRename, onFork, onArchive, currentId, t }) {
+function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, onRename, onFork, onArchive, currentId, t }) {
   const open = !isCollapsed;
   const showAll = isExpanded;
   const PREVIEW = 4;
@@ -1085,6 +1106,14 @@ function LoomGroup({ row, actions, isCollapsed, isExpanded, onToggleCollapse, on
         "span",
         { className: "loom-actions" },
         ...actions ?? [],
+        // A workspace row manages itself through this menu. A project row's
+        // verbs arrive as `actions` instead, because they belong to the Loom
+        // manifest rather than to DSH.
+        menu !== void 0 && h(RowMenu, {
+          label: menu.label,
+          items: menu.items,
+          onSelect: menu.onSelect
+        }),
         h("button", {
           type: "button",
           className: "loom-icon-btn",
@@ -1130,7 +1159,10 @@ function LoomSidebar({
   onDeleteProject,
   onRenameSession,
   onForkSession,
-  onArchiveSession
+  onArchiveSession,
+  onNewWorkspace,
+  onRenameWorkspace,
+  onDeleteWorkspace
 }) {
   const [query, setQuery] = React.useState("");
   const [collapsed, setCollapsed] = React.useState(() => /* @__PURE__ */ new Set());
@@ -1167,6 +1199,21 @@ function LoomSidebar({
     onRename: onRenameSession,
     onFork: onForkSession,
     onArchive: onArchiveSession,
+    // A workspace is the shell's own object, so its verbs are the shell's:
+    // rename and delete. Delete unregisters the Workspace without touching
+    // Sessions or files, so it is not styled as destructive data loss — but it
+    // does remove the entry, so the menu marks it danger.
+    menu: {
+      label: t("workspaceActions"),
+      items: [
+        { id: "rename", label: t("renameWorkspace"), icon: h(IconEditOutline16, null) },
+        { id: "delete", label: t("deleteWorkspace"), icon: h(IconTrashOutline16, null), danger: true }
+      ],
+      onSelect: (id) => {
+        if (id === "rename") onRenameWorkspace(row.key, row.title);
+        if (id === "delete") onDeleteWorkspace(row.key);
+      }
+    },
     currentId: sessionState?.current,
     t
   });
@@ -1263,7 +1310,18 @@ function LoomSidebar({
         }, h(IconTrashOutline16, { size: 16 }))
       ]
     }))),
-    sectionHead("workspaces", t("sectionWorkspaces"), workspaceRows.length),
+    sectionHead(
+      "workspaces",
+      t("sectionWorkspaces"),
+      workspaceRows.length,
+      h("button", {
+        type: "button",
+        className: "loom-icon-btn",
+        title: t("newWorkspace"),
+        "aria-label": t("newWorkspace"),
+        onClick: onNewWorkspace
+      }, h(IconPlusOutline16, { size: 16 }))
+    ),
     sectionBody("workspaces", () => workspaceRows.length === 0 ? h("div", { className: "loom-empty-section" }, t("noWorkspaces")) : workspaceRows.map(group)),
     sectionHead("chats", t("sectionChats"), chatSessions.length),
     sectionBody("chats", () => chatSessions.length === 0 ? h("div", { className: "loom-empty-section" }, t("noChats")) : chatSessions.map((summary) => h(SessionRow, {
@@ -1342,7 +1400,7 @@ function LoomSidebarHost({ bridge, ctx }) {
         },
         // Session verbs. `rename` is a per-session property, not a list verb, so
         // it resolves the session binding first — the list store has no rename.
-        onRenameSession: (sessionId, currentTitle) => setRenaming({ sessionId, title: currentTitle }),
+        onRenameSession: (sessionId, currentTitle) => setRenaming({ kind: "session", id: sessionId, title: currentTitle }),
         onForkSession: (sessionId) => {
           const navigation = ctx.get("uiWorkspace");
           if (navigation !== void 0) navigation.forkSession(sessionId).catch(() => {
@@ -1351,6 +1409,25 @@ function LoomSidebarHost({ bridge, ctx }) {
         onArchiveSession: (sessionId) => {
           const navigation = ctx.get("uiWorkspace");
           if (navigation !== void 0) void navigation.archiveSession(sessionId);
+        },
+        // Workspace verbs. A Workspace is the shell's own object, so these go
+        // through DSH's services rather than through Loom's manifest: Loom
+        // groups existing Workspaces and never mutates them.
+        onNewWorkspace: async () => {
+          const navigation = ctx.get("uiWorkspace");
+          if (navigation === void 0) return;
+          try {
+            const picked = await navigation.pickDirectory();
+            if (typeof picked !== "string" || picked.length === 0) return;
+            await ctx.workspaces.create({ path: picked });
+          } catch (cause) {
+            setError(interpolate(t("saveFailed"), { message: cause.message }));
+          }
+        },
+        onRenameWorkspace: (workspaceId, currentTitle) => setRenaming({ kind: "workspace", id: workspaceId, title: currentTitle }),
+        onDeleteWorkspace: (workspaceId) => {
+          void ctx.workspaces.delete(workspaceId).catch(() => {
+          });
         }
       }),
       renaming !== null && h(
@@ -1358,7 +1435,9 @@ function LoomSidebarHost({ bridge, ctx }) {
         {
           open: true,
           onClose: () => setRenaming(null),
-          title: t("renameSession"),
+          // One dialog serves both verbs: a session rename and a workspace rename
+          // ask for exactly the same thing — a new name.
+          title: t(renaming.kind === "session" ? "renameSession" : "renameWorkspace"),
           closeLabel: t("cancel"),
           footer: h(
             React.Fragment,
@@ -1367,12 +1446,17 @@ function LoomSidebarHost({ bridge, ctx }) {
             h(Button, {
               variant: "primary",
               onClick: () => {
-                const target = renaming.sessionId;
-                const next = renaming.title.trim();
+                const target = renaming;
+                const next = target.title.trim();
                 setRenaming(null);
                 if (next.length === 0) return;
-                const session = ctx.sessions?.binding(target)?.session;
-                if (session !== void 0) void session.rename(next);
+                if (target.kind === "session") {
+                  const session = ctx.sessions?.binding(target.id)?.session;
+                  if (session !== void 0) void session.rename(next);
+                } else {
+                  void ctx.workspaces.rename(target.id, next).catch(() => {
+                  });
+                }
               }
             }, t("save"))
           )
@@ -1381,7 +1465,7 @@ function LoomSidebarHost({ bridge, ctx }) {
           className: "loom-input",
           value: renaming.title,
           maxLength: 120,
-          "aria-label": t("renameSession"),
+          "aria-label": t(renaming.kind === "session" ? "renameSession" : "renameWorkspace"),
           onChange: (event) => setRenaming((current) => ({ ...current, title: event.target.value }))
         })
       ),
