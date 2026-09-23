@@ -252,7 +252,33 @@ function createBridge(ctx) {
   return {
     getManifest: () => call("getManifest"),
     putManifest: (manifest) => call("putManifest", { manifest }),
-    preflight: (projectId, activeWorkspaceId) => call("preflight", { projectId, activeWorkspaceId })
+    preflight: (projectId, activeWorkspaceId) => call("preflight", { projectId, activeWorkspaceId }),
+    report: (event) => call("report", event)
+  };
+}
+function report(bridge, event) {
+  try {
+    void bridge.report(event).catch(() => {
+    });
+  } catch {
+  }
+}
+function contribute(ctx, bridge, slot, options, component) {
+  return () => {
+    try {
+      const dispose = ctx.slots.register(options, component);
+      report(bridge, { event: "register", slot, ok: true });
+      return dispose;
+    } catch (error) {
+      report(bridge, {
+        event: "register",
+        slot,
+        ok: false,
+        message: error instanceof Error ? error.message : String(error),
+        stack: error instanceof Error ? String(error.stack ?? "").slice(0, 1200) : ""
+      });
+      throw error;
+    }
   };
 }
 function roleLabel(t, role) {
@@ -642,26 +668,69 @@ function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, dictionaries), "dsh-loom: dictionaries");
   const bridge = createBridge(ctx);
   const Panel = LoomPanelHost({ bridge });
-  ctx.slots.inject("main", () => ctx.slots.register({
-    name: "main",
-    key: "loom",
-    locale: NS
-  }, Panel));
-  ctx.slots.inject("sidebar.panellist", () => ctx.slots.register({
-    name: "sidebar.panellist",
-    id: "loom",
-    order: 40,
-    locale: NS,
-    // A thunk is re-read on every projection, so the label follows the active
-    // locale without re-registering.
-    label: () => {
-      try {
-        return ctx.locale.getLocale().active === "zh" ? "\u9879\u76EE" : "Projects";
-      } catch {
-        return "Projects";
-      }
+  const probe = (read) => {
+    try {
+      return read();
+    } catch (error) {
+      return `error: ${error instanceof Error ? error.message : String(error)}`;
     }
-  }, LoomIcon));
+  };
+  report(bridge, {
+    event: "apply",
+    ok: true,
+    hasSlots: ctx.slots !== void 0,
+    hasInject: typeof ctx.slots?.inject === "function",
+    hasRegister: typeof ctx.slots?.register === "function",
+    // Timing matters: `slots.inject` returns early while a slot is undeclared,
+    // so a spec that is missing here means the declaration lands later.
+    mainSpec: probe(() => ctx.slots.spec("main") !== void 0),
+    mainEpoch: probe(() => ctx.slots.declarationEpoch("main")),
+    panellistSpec: probe(() => ctx.slots.spec("sidebar.panellist") !== void 0),
+    panellistEpoch: probe(() => ctx.slots.declarationEpoch("sidebar.panellist"))
+  });
+  const label = () => {
+    try {
+      return ctx.locale.getLocale().active === "zh" ? "\u9879\u76EE" : "Projects";
+    } catch {
+      return "Projects";
+    }
+  };
+  try {
+    ctx.slots.inject("main", contribute(
+      ctx,
+      bridge,
+      "main",
+      { name: "main", key: "loom", locale: NS },
+      Panel
+    ));
+    report(bridge, { event: "inject", slot: "main", ok: true });
+  } catch (error) {
+    report(bridge, {
+      event: "inject",
+      slot: "main",
+      ok: false,
+      message: String(error?.message ?? error),
+      stack: String(error?.stack ?? "").slice(0, 1200)
+    });
+  }
+  try {
+    ctx.slots.inject("sidebar.panellist", contribute(
+      ctx,
+      bridge,
+      "sidebar.panellist",
+      { name: "sidebar.panellist", id: "loom", order: 40, locale: NS, label },
+      LoomIcon
+    ));
+    report(bridge, { event: "inject", slot: "sidebar.panellist", ok: true });
+  } catch (error) {
+    report(bridge, {
+      event: "inject",
+      slot: "sidebar.panellist",
+      ok: false,
+      message: String(error?.message ?? error),
+      stack: String(error?.stack ?? "").slice(0, 1200)
+    });
+  }
 }
 module.exports = { LoomIcon, LoomPanel, PreflightPanel, ProjectEditor, apply, createBridge, inject, name, renderPlanText };
 return module.exports; } });

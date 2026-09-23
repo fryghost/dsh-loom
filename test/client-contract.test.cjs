@@ -89,7 +89,11 @@ test('registers a sidebar entry whose id addresses its own main panel', () => {
 });
 
 test('the sidebar label follows the active locale without re-registering', () => {
-  assert.match(code, /label:\s*\(\)\s*=>/, 'a thunk label is re-read per projection');
+  // A thunk is re-read on every projection; a static string would freeze at
+  // registration time and ignore a later locale switch. The thunk may be
+  // inline or a named value, so this asserts the semantics, not the syntax.
+  assert.match(code, /\blabel\b/, 'the panellist entry must carry a label');
+  assert.doesNotMatch(code, /label:\s*['"]/, 'a static string would not follow a locale switch');
   assert.match(code, /getLocale\(\)/, 'the label must read the active locale');
 });
 

@@ -15,7 +15,7 @@
 
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { readdir, readFile, stat } from 'node:fs/promises';
+import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
 
 import { loadManifest, saveManifest } from './host/manifest-store.js';
 import { createSkillProvider } from './host/skill-provider.js';
@@ -169,6 +169,24 @@ function createRpcHandler(ctx, dshHome) {
             return { ok: false, error: { code: 'write-failed', message: saved.error, details: {} } };
           }
           return { ok: true, value: { manifest: saved.manifest, path: saved.path } };
+        }
+
+        case 'report': {
+          // Client-side diagnostics land here.
+          //
+          // The slot renderer retires a registration whose callback throws —
+          // `slots.inject` stops its controller and rethrows asynchronously —
+          // so the failure never reaches any surface the user or the model can
+          // see. The client therefore reports its own registration outcome
+          // explicitly, and this endpoint appends it to a log under $DSH_HOME.
+          const line = {
+            at: new Date().toISOString(),
+            ...(payload !== null && typeof payload === 'object' ? payload : { value: payload }),
+          };
+          const file = join(dshHome, 'loom-client.log');
+          await mkdir(dshHome, { recursive: true });
+          await appendFile(file, `${JSON.stringify(line)}\n`, 'utf8');
+          return { ok: true, value: { path: file } };
         }
 
         case 'preflight': {
