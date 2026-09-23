@@ -34,22 +34,22 @@ Loom is not a copy of it but a different implementation route: **do not change t
 This is the reason Loom exists. The hardest thing about a multi-folder project is not the "merge" — it is that **you cannot see the result of the merge**. So Loom puts the answer on the table before the session starts:
 
 ```
-项目：厦门TOD璞瑞（3 个文件夹）
+项目：example-project（3 个文件夹）
 活动文件夹：ws-a
 
-技能（4）
-  · tod-dimension-chain ← ws-a
-  · tod-read-image      ← ws-a
-  · pdf-xref-recover    ← ws-b
+技能（3）
+  · alpha-skill  ← ws-a
+  · beta-skill   ← ws-a
+  · gamma-skill  ← ws-b
 
 名称冲突（1）
-  ! render-plan
+  ! shared-skill
       生效：ws-a
       被遮蔽：ws-b
 
 指令文件（2，共 8421 字节）
-  · ws-a — D:/project/装修/AGENTS.md（6100 字节）
-  · ws-b — D:/project/资料/AGENTS.md（2321 字节）
+  · ws-a — /repo/app/AGENTS.md（6100 字节）
+  · ws-b — /repo/docs/AGENTS.md（2321 字节）
 
 写入范围：仅活动文件夹可写；其他成员可读，但写入会被沙箱拒绝（DSH 的写入边界由单个 workspaceRoot 推导）。
 
@@ -67,13 +67,13 @@ The data model is genuinely many-to-many, with no `claimed` exclusive set:
 {
   "schemaVersion": 2,
   "projects": [
-    { "id": "p1", "title": "装修",   "members": [{ "workspaceId": "ws-shared", "role": "writable" }] },
-    { "id": "p2", "title": "资料库", "members": [{ "workspaceId": "ws-shared", "role": "readonly" }] }
+    { "id": "p1", "title": "app",  "members": [{ "workspaceId": "ws-shared", "role": "writable" }] },
+    { "id": "p2", "title": "docs", "members": [{ "workspaceId": "ws-shared", "role": "readonly" }] }
   ]
 }
 ```
 
-The same folder is both a writable member of "装修" and a read-only member of "资料库". `role` describes **what it contributes**, not where it ranks.
+The same folder is both a writable member of "app" and a read-only member of "docs". `role` describes **what it contributes**, not where it ranks.
 
 ### Highlight 3: a conflict is visible, not a silent win
 
@@ -156,19 +156,19 @@ This removes it from both `dependencies` and `dsh.profile.bundles`. The project 
 Loom takes over the sidebar's browse area and splits it into three sections. **A session appears in exactly one section** — never duplicated, never missing:
 
 ```
-▾ 项目  3                                  +
-  ▾ 厦门TOD璞瑞                    ⋯
-        核对尺寸并推进渲染图      12 小时
-  ▾ dsh-project
-        优化 DSH 项目多文件夹合并插件  11 分钟
-▾ 工作区  5                                +
-  ▾ wecom_workspace                ⋯
-        [WeCom private chat message…    2 小时
-▾ 聊天  4
-      [WeCom private chat message…      15 天
+▾ 项目  2                                  +
+  ▾ example-project                ⋯
+        重构解析器                12 小时
+  ▾ other-project
+        补充缓存层                11 分钟
+▾ 工作区  3                                +
+  ▾ ws-a                           ⋯
+        调整构建脚本              2 小时
+▾ 聊天  1
+      [来自其他工具的会话…          15 天
 ```
 
-> This block is a **structural sketch**; its counts do not match the real screenshot above (there, 厦门TOD璞瑞 is collapsed and the Chats section sits below the fold). The screenshot is the real thing.
+> This block is a **structural sketch**, and every name in it is a placeholder. For the real look, see the screenshot — **the project, workspace and session names in that screenshot are the author's own data**; the rest of this document uses placeholders like `ws-a` and `example-project` throughout.
 
 | Section | Which sessions it takes |
 |---|---|
@@ -195,7 +195,7 @@ Archived sessions appear in none of the three sections; **subagent sessions are 
 
 **The same session may appear once under each of several projects, and that is deliberate.** If a folder belongs to two projects at once, its sessions are listed under both — because that folder really does belong to both. Deduplication happens only **between the members of one project** (when two members match the same session, it is listed once).
 
-The `优化 DSH 项目多文件夹合并插件` in the screenshot above is exactly this: both `dsh-project` and `dsh 插件` count it as a member, so it appears in both places. "Unique attribution" means **no duplication across the three sections**, not "every session appears exactly once globally" — the latter is impossible in this data model, and should not be done anyway.
+For example: if the workspace of the session `重构解析器` is a member of both `example-project` and `other-project`, that session appears under both. "Unique attribution" means **no duplication across the three sections**, not "every session appears exactly once globally" — the latter is impossible in this data model, and should not be done anyway.
 
 ### Common actions
 

@@ -34,22 +34,22 @@ Loom 不是它的复刻，而是换了一条实现路线：**不去改 cwd，而
 这是 Loom 存在的理由。多文件夹项目最难的不是"合并"，而是**你看不见合并的结果**。所以 Loom 在会话开始前就把答案摆出来：
 
 ```
-项目：厦门TOD璞瑞（3 个文件夹）
+项目：example-project（3 个文件夹）
 活动文件夹：ws-a
 
-技能（4）
-  · tod-dimension-chain ← ws-a
-  · tod-read-image      ← ws-a
-  · pdf-xref-recover    ← ws-b
+技能（3）
+  · alpha-skill  ← ws-a
+  · beta-skill   ← ws-a
+  · gamma-skill  ← ws-b
 
 名称冲突（1）
-  ! render-plan
+  ! shared-skill
       生效：ws-a
       被遮蔽：ws-b
 
 指令文件（2，共 8421 字节）
-  · ws-a — D:/project/装修/AGENTS.md（6100 字节）
-  · ws-b — D:/project/资料/AGENTS.md（2321 字节）
+  · ws-a — /repo/app/AGENTS.md（6100 字节）
+  · ws-b — /repo/docs/AGENTS.md（2321 字节）
 
 写入范围：仅活动文件夹可写；其他成员可读，但写入会被沙箱拒绝（DSH 的写入边界由单个 workspaceRoot 推导）。
 
@@ -67,13 +67,13 @@ Loom 不是它的复刻，而是换了一条实现路线：**不去改 cwd，而
 {
   "schemaVersion": 2,
   "projects": [
-    { "id": "p1", "title": "装修",   "members": [{ "workspaceId": "ws-shared", "role": "writable" }] },
-    { "id": "p2", "title": "资料库", "members": [{ "workspaceId": "ws-shared", "role": "readonly" }] }
+    { "id": "p1", "title": "app",  "members": [{ "workspaceId": "ws-shared", "role": "writable" }] },
+    { "id": "p2", "title": "docs", "members": [{ "workspaceId": "ws-shared", "role": "readonly" }] }
   ]
 }
 ```
 
-同一个文件夹既是「装修」的可写成员，又是「资料库」的只读成员。`role` 描述的是**它贡献什么**，而不是它排第几。
+同一个文件夹既是「app」的可写成员，又是「docs」的只读成员。`role` 描述的是**它贡献什么**，而不是它排第几。
 
 ### 亮点三：冲突可见，而不是静默取胜
 
@@ -156,19 +156,19 @@ dsh plugin --profile web remove dsh-loom
 侧边栏的浏览区被 Loom 接管，分成三段。**一个会话只出现在一段里**，不重复、不漏：
 
 ```
-▾ 项目  3                                  +
-  ▾ 厦门TOD璞瑞                    ⋯
-        核对尺寸并推进渲染图      12 小时
-  ▾ dsh-project
-        优化 DSH 项目多文件夹合并插件  11 分钟
-▾ 工作区  5                                +
-  ▾ wecom_workspace                ⋯
-        [WeCom private chat message…    2 小时
-▾ 聊天  4
-      [WeCom private chat message…      15 天
+▾ 项目  2                                  +
+  ▾ example-project                ⋯
+        重构解析器                12 小时
+  ▾ other-project
+        补充缓存层                11 分钟
+▾ 工作区  3                                +
+  ▾ ws-a                           ⋯
+        调整构建脚本              2 小时
+▾ 聊天  1
+      [来自其他工具的会话…          15 天
 ```
 
-> 上面这段是**结构示意**（数字与上面那张真实截图不完全一致——截图里「厦门TOD璞瑞」是收起的，且「聊天」段在折叠线以下）。真实观感以截图为准。
+> 上面这段是**结构示意**，用的都是占位名。真实观感看截图——**截图里的项目名、工作区名和会话标题是作者自己的数据**，本文其余部分一律用 `ws-a` / `example-project` 这类占位符。
 
 | 段 | 收哪些会话 |
 |---|---|
@@ -195,7 +195,7 @@ dsh plugin --profile web remove dsh-loom
 
 **同一个会话可能在多个项目下各出现一次，这是有意的。** 如果一个文件夹同时属于两个项目，它的会话在两个项目下都会列出——因为那个文件夹确实同时属于两边。去重只发生在**同一个项目内的多个成员之间**（两个成员命中同一会话时只列一次）。
 
-上面截图里的 `优化 DSH 项目多文件夹合并插件` 就是这样：`dsh-project` 和 `dsh 插件` 都把它算作成员，所以它在两处都在。所谓"归属唯一"指的是**三段之间不重复**，不是"每个会话全局只出现一次"——后者在这个数据模型里做不到，也不该做。
+举例：会话 `重构解析器` 的工作区如果同时是 `example-project` 和 `other-project` 的成员，它在两个项目下都会出现。所谓"归属唯一"指的是**三段之间不重复**，不是"每个会话全局只出现一次"——后者在这个数据模型里做不到，也不该做。
 
 ### 常用动作
 
