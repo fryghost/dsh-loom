@@ -23,9 +23,10 @@
 
 const React = require('react');
 const {
-  Button, Tag, StateDot, Modal, Input,
+  Button, Tag, StateDot, Modal, Input, Menu,
   IconFolderOpenOutline16, IconPlusOutline16, IconChevronDownOutline14,
-  IconEditOutline16, IconTrashOutline16,
+  IconEllipsisOutline16, IconEditOutline16, IconTrashOutline16,
+  IconBranchOutline16, IconArchiveOutline20,
 } = require('@deepseek-ai/dsh-client-ui-primitives');
 
 const h = React.createElement;
@@ -103,6 +104,12 @@ const dictionaries = {
     hoursAgo: '{count} 小时',
     daysAgo: '{count} 天',
     folderCount: '{count} 个文件夹',
+    rename: '重命名',
+    fork: '创建分支',
+    archive: '归档',
+    sessionActions: '会话操作',
+    renameSession: '重命名会话',
+    archiveHint: '归档只是把它从这些列表里收起来，会话记录不会删除。',
   },
   en: {
     projects: 'Projects',
@@ -172,6 +179,12 @@ const dictionaries = {
     hoursAgo: '{count}h',
     daysAgo: '{count}d',
     folderCount: '{count} folders',
+    rename: 'Rename',
+    fork: 'Fork',
+    archive: 'Archive',
+    sessionActions: 'Session actions',
+    renameSession: 'Rename session',
+    archiveHint: 'Archiving only hides it from these lists; the session log is kept.',
   },
 };
 
@@ -273,11 +286,12 @@ const STYLES = `
 
 .loom-field { display: flex; flex-direction: column; gap: 8px; }
 .loom-field-label { font-size: 13px; font-weight: 500; }
-/* The Input atom owns the field's chrome; the panel owns its width. My class
-   lands on the atom's WRAPPER, so the inner field needs the width too — setting
-   only the wrapper left the visible box at its intrinsic size. */
-.loom-input { display: block; width: 100%; }
-.loom-input input { width: 100%; box-sizing: border-box; }
+/* The Input atom owns the field's chrome — including the inline-flex wrapper
+   whose inner field fills it via flex: 1. Setting display: block here broke
+   that flex context, so the field stayed at its intrinsic width. Only the OUTER
+   dimension belongs to us. (No backticks in this comment: the whole block is
+   itself a template literal, and one would end it early.) */
+.loom-input { width: 100%; }
 .loom-picker {
   display: flex; flex-direction: column;
   border: 0.5px solid var(--dsw-alias-border-l3);
@@ -298,70 +312,120 @@ const STYLES = `
 }
 .loom-search { padding: 0 2px 8px; }
 
-/* A section header is itself the collapse control. */
-.loom-section-head { display: flex; align-items: center; gap: 2px; margin-top: 10px; padding: 0 2px; }
-.loom-section-head:first-of-type { margin-top: 2px; }
+/* ── sidebar browser: 项目 / 工作区 / 聊天 ─────────────────────────
+   TWO rules govern this block. Both come from the shipped surfaces rather than
+   from taste, because inventing either is what made it read as arbitrary.
+
+   1. TYPE SCALE — exactly three sizes, one job each:
+        12px/20px   section labels, counts, timestamps, "show more" (secondary)
+        14px/20px   every row title — group and session alike      (primary)
+        16px/24px   the main panel's heading
+      The previous mix (11/12/12.5/13/14/15/16/17) had no relationship between
+      size and role; that is precisely what "字号不一致，没有逻辑" described.
+
+   2. TREE — parent/child is DRAWN, not implied:
+        · a 34px group row whose leading 16px slot carries the twisty;
+        · the session list indented to the twisty's CENTRE and joined to it by a
+          hairline guide, so sessions visibly hang off their group;
+        · every step is 8px (8 → 16 → 24), so depth needs no guesswork.
+      A flat list distinguished only by a larger left padding — what this
+      replaced — showed no structure at all. */
+.loom-sidebar {
+  display: flex; flex-direction: column;
+  height: 100%; overflow-y: auto;
+  padding: 8px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 14px; line-height: 20px;
+}
+.loom-search { padding: 0 0 8px; }
+
+.loom-section-head { display: flex; align-items: center; gap: 2px; margin-top: 12px; padding: 0 4px; }
+.loom-section-head:first-of-type { margin-top: 4px; }
 .loom-section-title {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 4px;
-  padding: 4px; border: none; border-radius: 6px;
-  background: transparent; text-align: left; cursor: pointer;
-  color: var(--dsw-alias-label-secondary);
-  font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .04em;
+  height: 28px; padding: 0 4px;
+  border: none; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-secondary);
+  cursor: pointer; text-align: left;
+  font-size: 12px; line-height: 20px; font-weight: 500;
 }
 .loom-section-title:hover { color: var(--dsw-alias-label-primary); }
-.loom-section-count { font-weight: 400; opacity: .8; }
+.loom-section-count { font-weight: 400; color: var(--dsw-alias-label-tertiary); }
 
 .loom-group { display: flex; flex-direction: column; }
 .loom-group-head {
-  display: flex; align-items: center; gap: 2px;
-  padding: 1px 4px 1px 0; border-radius: 8px;
+  display: flex; align-items: center; gap: 6px;
+  height: 34px; padding: 0 8px;
+  border-radius: 8px; cursor: pointer; user-select: none;
 }
 .loom-group-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.loom-twisty {
-  flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 20px; height: 20px; padding: 0; border: none; border-radius: 6px;
-  background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
-  transition: transform .12s ease;
-}
-.loom-twisty-collapsed { transform: rotate(-90deg); }
 .loom-group-name {
-  flex: 1; min-width: 0; text-align: left;
-  padding: 3px 0; border: none; border-radius: 6px;
-  background: transparent; color: inherit; font: inherit; font-weight: 500; cursor: pointer;
+  flex: 1; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  font-size: 14px; line-height: 20px;
+}
+
+/* The 16px leading slot every row in the shipped browser has. It is what the
+   twisty, the status dot, and the indent all align to. */
+.loom-slot {
+  flex: none; width: 16px; height: 20px;
+  display: inline-flex; align-items: center; justify-content: center;
+  color: var(--dsw-alias-label-tertiary);
+}
+.loom-twisty { flex: none; display: inline-flex; transition: transform 150ms var(--ds-ease-in-out); }
+.loom-twisty-collapsed { transform: rotate(-90deg); }
+
+/* Sessions hang off their group: indented to the twisty's centre (16px) and
+   joined to it by a hairline, so membership is visible rather than implied. */
+.loom-children {
+  display: flex; flex-direction: column;
+  margin-left: 15px; padding-left: 7px;
+  border-left: 1px solid var(--dsw-alias-border-l2);
+}
+
+.loom-row {
+  display: flex; align-items: center; gap: 0;
+  width: 100%; height: 32px; padding: 0 8px;
+  border: none; border-radius: 8px;
+  background: transparent; color: var(--dsw-alias-label-primary);
+  cursor: pointer; text-align: left; user-select: none;
+  font-size: 14px; line-height: 20px;
+}
+.loom-row:hover,
+.loom-row-current { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-title {
+  flex: 1; min-width: 0; margin: 0 6px 0 4px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.loom-group-actions { display: flex; align-items: center; gap: 1px; flex: none; opacity: 0; }
-.loom-group-head:hover .loom-group-actions,
-.loom-group-head:focus-within .loom-group-actions { opacity: 1; }
-.loom-icon-btn {
-  display: inline-flex; align-items: center; justify-content: center;
-  width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px;
-  background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
-}
-.loom-icon-btn:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+.loom-time { flex: none; font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-tertiary); }
 
-/* Sessions are inset under their group so the hierarchy is visible at a glance. */
-.loom-session {
-  display: flex; align-items: center; gap: 8px;
-  width: 100%; text-align: left;
-  padding: 5px 8px 5px 26px; border: none; border-radius: 8px;
-  background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; cursor: pointer;
+/* Actions are bare 16px glyphs at gap 12, and they TAKE THE TIMESTAMP'S PLACE
+   so a row never reflows as the pointer crosses it. */
+.loom-actions { display: none; align-items: center; gap: 12px; flex: none; }
+.loom-row:hover .loom-actions,
+.loom-row:focus-within .loom-actions,
+.loom-group-head:hover .loom-actions,
+.loom-group-head:focus-within .loom-actions { display: inline-flex; }
+.loom-row:hover .loom-time,
+.loom-group-head:hover .loom-time { display: none; }
+.loom-icon-btn {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 16px; height: 16px; padding: 0; border: none; border-radius: 4px;
+  background: transparent; color: var(--dsw-alias-label-tertiary); cursor: pointer;
 }
-.loom-session:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.loom-session-current { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
-.loom-session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.loom-session-time { flex: none; font-size: 11px; opacity: .75; }
-.loom-chat { padding-left: 8px; }
+.loom-icon-btn:hover { color: var(--dsw-alias-label-primary); }
 
 .loom-more {
-  padding: 4px 8px 6px 26px; border: none; border-radius: 8px;
-  background: transparent; color: var(--dsw-alias-label-secondary);
-  font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+  height: 28px; padding: 0 8px;
+  border: none; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-tertiary);
+  cursor: pointer; text-align: left;
+  font-size: 12px; line-height: 20px;
 }
-.loom-more:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
-.loom-sidebar-empty { padding: 4px 8px 8px 26px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
-.loom-empty-section { padding: 2px 8px 6px 14px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.loom-more:hover { color: var(--dsw-alias-label-primary); }
+.loom-empty-section { padding: 2px 8px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px; }
+.loom-warn-note { padding: 2px 8px; color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }
 `;
 
 function installStyles() {
@@ -854,22 +918,74 @@ function sessionTime(summary, t) {
   return interpolate(t('daysAgo'), { count: Math.round(hours / 24) });
 }
 
-/** One session row: the selectable conversation inside a section. */
-function SessionRow({ summary, current, onClick, t }) {
-  return h('button', {
-    type: 'button',
-    className: current === true ? 'loom-session loom-session-current' : 'loom-session',
+/**
+ * One session row — the selectable conversation inside a section.
+ *
+ * A `div` with `role="treeitem"`, not a `button`: the row contains its own
+ * ellipsis button, and a button inside a button is invalid.
+ *
+ * The menu is the shipped shape — ONE ellipsis opening rename / fork / archive.
+ * Two inline glyphs (what this had) is neither the shipped affordance nor
+ * enough room for the third verb.
+ */
+function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t }) {
+  const [menuOpen, setMenuOpen] = React.useState(false);
+  const title = summary.displayTitle || t('untitled');
+  // A blank row is provisional: nothing has happened in it, so a timestamp and
+  // the row verbs would all act on content that does not exist yet.
+  const settled = summary.blank !== true;
+
+  const items = [
+    { id: 'rename', label: t('rename'), icon: h(IconEditOutline16, null) },
+    { id: 'fork', label: t('fork'), icon: h(IconBranchOutline16, null) },
+    { id: 'archive', label: t('archive'), icon: h(IconArchiveOutline20, { size: 16 }) },
+  ];
+
+  return h('div', {
+    role: 'treeitem',
+    tabIndex: 0,
+    'aria-selected': current === true,
+    className: current === true ? 'loom-row loom-row-current' : 'loom-row',
+    title,
     onClick,
-    title: summary.displayTitle || t('untitled'),
+    onKeyDown: event => {
+      if (event.key === 'Enter' || event.key === ' ') {
+        event.preventDefault();
+        onClick();
+      }
+    },
   },
-    h('span', { className: 'loom-session-title' }, summary.displayTitle || t('untitled')),
-    summary.running === true && h(StateDot, { state: 'ongoing', size: 8 }),
-    h('span', { className: 'loom-session-time' }, sessionTime(summary, t)),
+    h('span', { className: 'loom-slot' },
+      summary.running === true ? h(StateDot, { state: 'ongoing', size: 10 }) : null),
+    h('span', { className: 'loom-title' }, title),
+
+    settled && h('span', { className: 'loom-time' }, sessionTime(summary, t)),
+    // Actions take the timestamp's place, so the row does not reflow on hover.
+    settled && h('span', { className: 'loom-actions' },
+      h(Menu, {
+        open: menuOpen,
+        onClose: () => setMenuOpen(false),
+        items,
+        onSelect: id => {
+          setMenuOpen(false);
+          if (id === 'rename') onRename(summary.id, title);
+          if (id === 'fork') onFork(summary.id);
+          if (id === 'archive') onArchive(summary.id);
+        },
+        portal: true,
+        closeOnPointerLeave: true,
+        anchor: h('button', {
+          type: 'button',
+          className: 'loom-icon-btn',
+          'aria-label': t('sessionActions'),
+          onClick: event => { event.stopPropagation(); setMenuOpen(value => !value); },
+        }, h(IconEllipsisOutline16, { size: 16 })),
+      })),
   );
 }
 
 /** A collapsible group row: its own twisty, name, actions, and session list. */
-function LoomGroup({ row, actions, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, currentId, t }) {
+function LoomGroup({ row, actions, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, onRename, onFork, onArchive, currentId, t }) {
   const open = !isCollapsed;
   const showAll = isExpanded;
   const PREVIEW = 4;
@@ -877,40 +993,42 @@ function LoomGroup({ row, actions, isCollapsed, isExpanded, onToggleCollapse, on
   const hidden = row.sessions.length - PREVIEW;
 
   return h('div', { className: 'loom-group' },
-    h('div', { className: 'loom-group-head' },
-      h('button', {
-        type: 'button',
-        className: open ? 'loom-twisty' : 'loom-twisty loom-twisty-collapsed',
-        'aria-expanded': open,
-        'aria-label': row.title,
-        onClick: () => onToggleCollapse(row.key),
-      }, h(IconChevronDownOutline14, { size: 14 })),
-      h('button', {
-        type: 'button',
-        className: 'loom-group-name',
-        title: row.title,
-        onClick: () => onToggleCollapse(row.key),
-      }, row.title),
-      h('div', { className: 'loom-group-actions' },
+    h('div', {
+      className: 'loom-group-head',
+      role: 'treeitem',
+      'aria-expanded': open,
+      onClick: () => onToggleCollapse(row.key),
+    },
+      // The twisty lives in the same 16px slot every row uses, which is what
+      // the session list indents to and the guide line aligns under.
+      h('span', { className: 'loom-slot' },
+        h('span', {
+          className: open ? 'loom-twisty' : 'loom-twisty loom-twisty-collapsed',
+        }, h(IconChevronDownOutline14, { size: 14 }))),
+      h('span', { className: 'loom-group-name' }, row.title),
+      h('span', { className: 'loom-actions' },
         ...(actions ?? []),
         h('button', {
           type: 'button',
           className: 'loom-icon-btn',
           title: t('newChat'),
           'aria-label': `${t('newChat')} — ${row.title}`,
-          onClick: () => onNew(row),
+          onClick: event => { event.stopPropagation(); onNew(row); },
         }, h(IconPlusOutline16, { size: 16 })),
       ),
     ),
 
-    open && h(React.Fragment, null,
+    open && h('div', { className: 'loom-children' },
       row.sessions.length === 0
-        ? h('div', { className: 'loom-sidebar-empty' }, t('noSessions'))
+        ? h('div', { className: 'loom-empty-section' }, t('noSessions'))
         : shown.map(summary => h(SessionRow, {
             key: summary.id,
             summary,
             current: summary.id === currentId,
             onClick: () => onOpen(summary.id),
+            onRename,
+            onFork,
+            onArchive,
             t,
           })),
       hidden > 0 && h('button', {
@@ -931,6 +1049,7 @@ function LoomGroup({ row, actions, isCollapsed, isExpanded, onToggleCollapse, on
 function LoomSidebar({
   projects, snapshot, sessionState, t,
   onOpenSession, onStartSession, onNewProject, onEditProject, onDeleteProject,
+  onRenameSession, onForkSession, onArchiveSession,
 }) {
   const [query, setQuery] = React.useState('');
   const [collapsed, setCollapsed] = React.useState(() => new Set());
@@ -974,12 +1093,15 @@ function LoomSidebar({
     onToggleExpand: toggleExpand,
     onOpen: onOpenSession,
     onNew: target => onStartSession(target.startWorkspaceId),
+    onRename: onRenameSession,
+    onFork: onForkSession,
+    onArchive: onArchiveSession,
     currentId: sessionState?.current,
     t,
   });
 
   // A section is collapsible in its own right, so a user who only wants the
-// workspace list can put the other two away.
+  // workspace list can put the other two away.
   const [hiddenSections, setHiddenSections] = React.useState(() => new Set());
   const toggleSection = toggle(setHiddenSections);
 
@@ -1018,7 +1140,7 @@ function LoomSidebar({
       }),
     ),
 
-    nothing && h('div', { className: 'loom-sidebar-empty' }, t('noMatches')),
+    nothing && h('div', { className: 'loom-empty-section' }, t('noMatches')),
 
     sectionHead('projects', t('sectionProjects'), projectRows.length,
       h('button', {
@@ -1037,6 +1159,9 @@ function LoomSidebar({
           onToggleExpand: toggleExpand,
           onOpen: onOpenSession,
           onNew: target => onStartSession(target.startWorkspaceId),
+          onRename: onRenameSession,
+          onFork: onForkSession,
+          onArchive: onArchiveSession,
           currentId: sessionState?.current,
           t,
           actions: [
@@ -1044,12 +1169,12 @@ function LoomSidebar({
               key: 'folders', type: 'button', className: 'loom-icon-btn',
               title: interpolate(t('folderCount'), { count: row.folders }),
               'aria-label': interpolate(t('folderCount'), { count: row.folders }),
-              onClick: () => onEditProject(row.project),
+              onClick: event => { event.stopPropagation(); onEditProject(row.project); },
             }, h(IconEditOutline16, { size: 16 })),
             h('button', {
               key: 'remove', type: 'button', className: 'loom-icon-btn',
               title: t('delete'), 'aria-label': t('delete'),
-              onClick: () => onDeleteProject(row.project),
+              onClick: event => { event.stopPropagation(); onDeleteProject(row.project); },
             }, h(IconTrashOutline16, { size: 16 })),
           ],
         })))),
@@ -1067,6 +1192,9 @@ function LoomSidebar({
           summary,
           current: summary.id === sessionState?.current,
           onClick: () => onOpenSession(summary.id),
+          onRename: onRenameSession,
+          onFork: onForkSession,
+          onArchive: onArchiveSession,
           t,
         })))),
   );
@@ -1085,6 +1213,7 @@ function LoomSidebarHost({ bridge, ctx }) {
     const [manifest, setManifest] = React.useState(undefined);
     const [error, setError] = React.useState('');
     const [editing, setEditing] = React.useState(null);
+    const [renaming, setRenaming] = React.useState(null);
 
     const reload = React.useCallback(async () => {
       try {
@@ -1139,7 +1268,51 @@ function LoomSidebarHost({ bridge, ctx }) {
         onNewProject: () => setEditing({}),
         onEditProject: project => setEditing(project),
         onDeleteProject: project => { void put(projects.filter(item => item.id !== project.id)); },
+
+        // Session verbs. `rename` is a per-session property, not a list verb, so
+        // it resolves the session binding first — the list store has no rename.
+        onRenameSession: (sessionId, currentTitle) => setRenaming({ sessionId, title: currentTitle }),
+        onForkSession: sessionId => {
+          const navigation = ctx.get('uiWorkspace');
+          // Fork opens the child, and a failure keeps the current selection.
+          if (navigation !== undefined) navigation.forkSession(sessionId).catch(() => {});
+        },
+        onArchiveSession: sessionId => {
+          const navigation = ctx.get('uiWorkspace');
+          // Archive hides the row through the archive set and never touches the
+          // session log, so it is not destructive and needs no confirmation.
+          if (navigation !== undefined) void navigation.archiveSession(sessionId);
+        },
       }),
+
+      renaming !== null && h(Modal, {
+        open: true,
+        onClose: () => setRenaming(null),
+        title: t('renameSession'),
+        closeLabel: t('cancel'),
+        footer: h(React.Fragment, null,
+          h(Button, { variant: 'outline', onClick: () => setRenaming(null) }, t('cancel')),
+          h(Button, {
+            variant: 'primary',
+            onClick: () => {
+              const target = renaming.sessionId;
+              const next = renaming.title.trim();
+              setRenaming(null);
+              if (next.length === 0) return;
+              const session = ctx.sessions?.binding(target)?.session;
+              if (session !== undefined) void session.rename(next);
+            },
+          }, t('save')),
+        ),
+      },
+        h(Input, {
+          className: 'loom-input',
+          value: renaming.title,
+          maxLength: 120,
+          'aria-label': t('renameSession'),
+          onChange: event => setRenaming(current => ({ ...current, title: event.target.value })),
+        }),
+      ),
 
       editing !== null && h(ProjectEditor, {
         project: editing.id === undefined ? undefined : editing,
