@@ -258,7 +258,7 @@ var STYLES = `
 }
 .loom-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .loom-name {
-  font-size: 15px; line-height: 22px; font-weight: 500;
+  font-size: 14px; line-height: 20px; font-weight: 500;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .loom-card-actions { display: flex; align-items: center; gap: 8px; flex: none; }
@@ -267,11 +267,13 @@ var STYLES = `
 .loom-member { display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
 .loom-member + .loom-member { border-top: 0.5px solid var(--dsw-alias-border-l3); }
 .loom-member-name { flex: none; }
+/* Normal left-to-right truncation. A reversed direction showed the tail of a
+   long path but rendered as a torn fragment ("\u2026seek\\dsh-project"), which read
+   as breakage rather than as an ellipsis. */
 .loom-member-path {
   flex: 1; min-width: 0;
-  color: var(--dsw-alias-label-secondary); font-size: 13px;
+  color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  direction: rtl; text-align: left;
 }
 
 .loom-empty {
@@ -279,7 +281,7 @@ var STYLES = `
   padding: 48px 24px; text-align: center;
   border: 0.5px dashed var(--dsw-alias-border-l3); border-radius: 16px;
 }
-.loom-empty-title { font-size: 15px; font-weight: 500; }
+.loom-empty-title { font-size: 14px; line-height: 20px; font-weight: 500; }
 .loom-empty-hint { color: var(--dsw-alias-label-secondary); max-width: 46ch; }
 
 .loom-preflight {
@@ -289,22 +291,22 @@ var STYLES = `
   background: var(--dsw-alias-bg-layer-2);
 }
 .loom-preflight-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.loom-boundary { color: var(--dsw-alias-label-secondary); font-size: 13px; line-height: 20px; }
+.loom-boundary { color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 22px; }
 
 .loom-section { display: flex; flex-direction: column; gap: 6px; }
 .loom-section-title {
-  font-size: 13px; line-height: 20px; font-weight: 500;
+  font-size: 12px; line-height: 20px; font-weight: 500;
   display: flex; align-items: center; gap: 6px;
 }
 .loom-section-title.loom-warn { color: var(--dsw-alias-state-warn-primary); }
-.loom-row { display: flex; align-items: baseline; gap: 8px; font-size: 13px; line-height: 20px; }
+.loom-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
 .loom-row + .loom-row { margin-top: 2px; }
 .loom-src {
-  color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px;
+  color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px;
   word-break: break-all;
 }
-.loom-muted { color: var(--dsw-alias-label-secondary); font-size: 13px; }
-.loom-warn { color: var(--dsw-alias-state-warn-primary); }
+.loom-muted { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 20px; }
+.loom-warn { color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }
 
 .loom-results { display: flex; flex-direction: column; gap: 12px; }
 .loom-pre {
@@ -317,33 +319,54 @@ var STYLES = `
   max-height: 260px; overflow: auto;
 }
 
-.loom-field { display: flex; flex-direction: column; gap: 8px; }
-.loom-field-label { font-size: 13px; font-weight: 500; }
+/* \u2500\u2500 project editor \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+   A Modal card is 380px wide, which is sized for a short form. A folder picker
+   needs a name AND a path per row, so this one is wider; doubling the class
+   raises specificity above the atom's own .dialog rule whatever the order the
+   two stylesheets load in. */
+.loom-editor.loom-editor { width: min(560px, 100%); }
+
+.loom-field { display: flex; flex-direction: column; gap: 6px; }
+.loom-field + .loom-field { margin-top: 20px; }
+.loom-field-label { font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary); }
 /* The Input atom owns the field's chrome \u2014 including the inline-flex wrapper
    whose inner field fills it via flex: 1. Setting display: block here broke
    that flex context, so the field stayed at its intrinsic width. Only the OUTER
    dimension belongs to us. (No backticks in this comment: the whole block is
    itself a template literal, and one would end it early.) */
 .loom-input { width: 100%; }
+
+/* Two lines per row: the name, then the path beneath it in tertiary.
+   Fitting checkbox + name + path + a radio onto ONE line is what made this
+   cramped, and it forced the path into a reversed-direction truncation that
+   rendered as a torn-off fragment like "\u2026seek\\dsh-project". */
 .loom-picker {
   display: flex; flex-direction: column;
+  max-height: 320px; overflow-y: auto;
   border: 0.5px solid var(--dsw-alias-border-l3);
-  border-radius: 12px; overflow: hidden;
-  max-height: 300px; overflow-y: auto;
+  border-radius: 12px;
 }
-.loom-pick { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 13px; }
+.loom-pick {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px 12px; cursor: pointer;
+}
 .loom-pick + .loom-pick { border-top: 0.5px solid var(--dsw-alias-border-l3); }
-.loom-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
-
-/* \u2500\u2500 sidebar browser: \u9879\u76EE / \u5DE5\u4F5C\u533A / \u804A\u5929 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500 */
-.loom-sidebar {
-  display: flex; flex-direction: column;
-  height: 100%; overflow-y: auto;
-  padding: 8px 6px 16px;
-  color: var(--dsw-alias-label-primary);
-  font-size: 13px; line-height: 20px;
+.loom-pick:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-pick-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.loom-pick-name {
+  font-size: 14px; line-height: 20px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
-.loom-search { padding: 0 2px 8px; }
+.loom-pick-path {
+  font-size: 12px; line-height: 18px;
+  color: var(--dsw-alias-label-tertiary);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.loom-pick-default {
+  flex: none; display: flex; align-items: center; gap: 6px;
+  font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary);
+}
+.loom-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 
 /* \u2500\u2500 sidebar browser: \u9879\u76EE / \u5DE5\u4F5C\u533A / \u804A\u5929 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
    TWO rules govern this block. Both come from the shipped surfaces rather than
@@ -692,6 +715,10 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
       onClose,
       title: project ? t("edit") : t("newProject"),
       closeLabel: t("cancel"),
+      // A wider card than the atom's 380px default: each row carries a name and a
+      // path, which is a two-column problem the default width cannot hold.
+      className: "loom-editor",
+      description: t("folderPickerHint"),
       footer: h(
         React.Fragment,
         null,
@@ -708,6 +735,7 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
         className: "loom-input",
         value: title,
         maxLength: 80,
+        "aria-label": t("projectName"),
         onChange: (event) => {
           setTitle(event.target.value);
           setError("");
@@ -717,39 +745,51 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
     h(
       "div",
       { className: "loom-field" },
-      h("label", { className: "loom-field-label" }, t("folderPicker")),
-      h("div", { className: "loom-muted" }, t("folderPickerHint")),
+      h("div", { className: "loom-field-label" }, t("folderPicker")),
       h(
         "div",
         { className: "loom-picker" },
+        // The whole row is a label, so clicking anywhere toggles membership —
+        // only the radio is a separate target.
         workspaces.map((workspace) => h(
-          "div",
-          { key: workspace.workspaceId, className: "loom-pick" },
+          "label",
+          {
+            key: workspace.workspaceId,
+            className: "loom-pick"
+          },
+          h("input", {
+            type: "checkbox",
+            checked: selected.has(workspace.workspaceId),
+            onChange: () => toggle(workspace.workspaceId)
+          }),
           h(
-            "label",
-            { className: "loom-check" },
-            h("input", { type: "checkbox", checked: selected.has(workspace.workspaceId), onChange: () => toggle(workspace.workspaceId) }),
-            h("span", { className: "loom-member-name" }, workspace.title)
+            "span",
+            { className: "loom-pick-text" },
+            h("span", { className: "loom-pick-name" }, workspace.title),
+            h("span", { className: "loom-pick-path", title: workspace.path }, workspace.path)
           ),
-          h("span", { className: "loom-member-path", title: workspace.path }, workspace.path),
-          // Choosing a starting folder is a per-project preference, not a
-          // rank: it never privileges one folder during discovery.
-          h(
-            "label",
-            { className: "loom-check", title: t("defaultStart") },
+          // The starting folder is a per-project preference, not a rank: it
+          // never privileges one folder during discovery. It only appears for a
+          // member, because a folder that is not in the project cannot be its
+          // starting point — a disabled radio on every row was pure noise.
+          selected.has(workspace.workspaceId) && h(
+            "span",
+            {
+              className: "loom-pick-default",
+              title: t("defaultStart")
+            },
             h("input", {
               type: "radio",
               name: "loom-default",
               checked: defaultId === workspace.workspaceId,
-              disabled: !selected.has(workspace.workspaceId),
               onChange: () => setDefaultId(workspace.workspaceId)
             }),
-            h("span", { className: "loom-muted" }, t("defaultStart"))
+            t("defaultStart")
           )
         ))
       )
     ),
-    error.length > 0 && h("div", { className: "loom-warn" }, error)
+    error.length > 0 && h("div", { className: "loom-warn-note" }, error)
   );
 }
 function LoomPanel({ bridge, workspaces, t }) {
