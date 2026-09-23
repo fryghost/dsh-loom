@@ -23,13 +23,16 @@
 
 const React = require('react');
 const {
-  Button, Tag, StateDot, Modal, Input, IconFolderOpenOutline16,
+  Button, Tag, StateDot, Modal, Input,
+  IconFolderOpenOutline16, IconPlusOutline16, IconChevronDownOutline14,
+  IconEditOutline16, IconTrashOutline16,
 } = require('@deepseek-ai/dsh-client-ui-primitives');
 
 const h = React.createElement;
 
 const NS = 'dsh-loom';
 const CHANNEL = '/dsh-loom';
+const { deriveSections } = require('./core/sections.cjs');
 
 const dictionaries = {
   zh: {
@@ -83,6 +86,23 @@ const dictionaries = {
     folderPicker: '勾选参与的文件夹',
     folderPickerHint: '文件夹可以同时属于多个项目。任何一个文件夹都可以作为默认起点，这不影响它能贡献什么。',
     writeBoundaryTitle: '写入范围',
+    sectionProjects: '项目',
+    sectionWorkspaces: '工作区',
+    sectionChats: '聊天',
+    newChat: '新对话',
+    searchPlaceholder: '搜索会话',
+    showMore: '展开其余 {count} 个会话',
+    showLess: '收起',
+    untitled: '未命名会话',
+    noSessions: '还没有会话',
+    noWorkspaces: '没有未归入项目的工作区',
+    noChats: '没有未归属的会话',
+    noMatches: '没有匹配的会话',
+    justNow: '刚刚',
+    minutesAgo: '{count} 分钟',
+    hoursAgo: '{count} 小时',
+    daysAgo: '{count} 天',
+    folderCount: '{count} 个文件夹',
   },
   en: {
     projects: 'Projects',
@@ -135,6 +155,23 @@ const dictionaries = {
     folderPicker: 'Select the folders',
     folderPickerHint: 'A folder may belong to any number of projects. Any folder can be the starting point — that never affects what it contributes.',
     writeBoundaryTitle: 'Write scope',
+    sectionProjects: 'Projects',
+    sectionWorkspaces: 'Workspaces',
+    sectionChats: 'Chats',
+    newChat: 'New chat',
+    searchPlaceholder: 'Search sessions',
+    showMore: 'Show {count} more',
+    showLess: 'Show less',
+    untitled: 'Untitled session',
+    noSessions: 'No sessions yet',
+    noWorkspaces: 'No workspaces outside a project',
+    noChats: 'No unattributed sessions',
+    noMatches: 'No matching sessions',
+    justNow: 'just now',
+    minutesAgo: '{count}m',
+    hoursAgo: '{count}h',
+    daysAgo: '{count}d',
+    folderCount: '{count} folders',
   },
 };
 
@@ -247,6 +284,67 @@ const STYLES = `
 .loom-pick { display: flex; align-items: center; gap: 10px; padding: 10px 12px; font-size: 13px; }
 .loom-pick + .loom-pick { border-top: 0.5px solid var(--dsw-alias-border-l3); }
 .loom-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
+
+/* ── sidebar browser: 项目 / 工作区 / 聊天 ───────────────────────── */
+.loom-sidebar {
+  display: flex; flex-direction: column;
+  height: 100%; overflow-y: auto;
+  padding: 6px 6px 12px;
+  color: var(--dsw-alias-label-primary);
+  font-size: 13px; line-height: 20px;
+}
+.loom-search { padding: 2px 2px 6px; }
+.loom-section-head {
+  display: flex; align-items: center; justify-content: space-between;
+  gap: 6px; padding: 12px 8px 4px;
+  color: var(--dsw-alias-label-secondary);
+  font-size: 11px; font-weight: 600; letter-spacing: .04em;
+}
+.loom-group { display: flex; flex-direction: column; }
+.loom-group-head {
+  display: flex; align-items: center; gap: 2px;
+  padding: 1px 4px 1px 0; border-radius: 8px;
+}
+.loom-group-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-twisty {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 20px; height: 20px; padding: 0; border: none; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
+  transition: transform .12s ease;
+}
+.loom-twisty-collapsed { transform: rotate(-90deg); }
+.loom-group-name {
+  flex: 1; min-width: 0; text-align: left;
+  padding: 2px 0; border: none; border-radius: 6px;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.loom-group-actions { display: flex; align-items: center; gap: 1px; flex: none; opacity: 0; }
+.loom-group-head:hover .loom-group-actions,
+.loom-group-head:focus-within .loom-group-actions { opacity: 1; }
+.loom-icon-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  width: 22px; height: 22px; padding: 0; border: none; border-radius: 6px;
+  background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
+}
+.loom-icon-btn:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+.loom-session {
+  display: flex; align-items: center; gap: 8px;
+  width: 100%; text-align: left;
+  padding: 5px 8px 5px 26px; border: none; border-radius: 8px;
+  background: transparent; color: inherit; font: inherit; cursor: pointer;
+}
+.loom-session:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-session-current { background: var(--dsw-alias-interactive-bg-active); }
+.loom-session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.loom-session-time { flex: none; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.loom-more {
+  padding: 4px 8px 6px 26px; border: none; border-radius: 8px;
+  background: transparent; color: var(--dsw-alias-label-secondary);
+  font: inherit; font-size: 12px; text-align: left; cursor: pointer;
+}
+.loom-more:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.loom-sidebar-empty { padding: 4px 8px 8px 26px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 `;
 
 function installStyles() {
@@ -669,7 +767,8 @@ function LoomPanel({ bridge, workspaces, t }) {
 }
 
 const name = 'dsh-loom';
-const inject = ['slots', 'locale', 'workspaces', 'connection'];
+// `sessions` is a hard dependency: the browser's whole point is opening one.
+const inject = ['slots', 'locale', 'workspaces', 'sessions', 'connection'];
 
 /**
  * Bind the panel to the seats the slot machinery provides.
@@ -725,8 +824,281 @@ function LoomIcon({ size, active }) {
   }, h(IconFolderOpenOutline16, { size: edge }));
 }
 
+/** Compact age for a session row, in the panel's own copy. */
+function sessionTime(summary, t) {
+  const at = summary?.updatedAt;
+  if (typeof at !== 'number') return '';
+  const minutes = Math.max(0, Math.round((Date.now() - at) / 60000));
+  if (minutes < 1) return t('justNow');
+  if (minutes < 60) return interpolate(t('minutesAgo'), { count: minutes });
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return interpolate(t('hoursAgo'), { count: hours });
+  return interpolate(t('daysAgo'), { count: Math.round(hours / 24) });
+}
+
+/** One session row: the selectable conversation inside a section. */
+function SessionRow({ summary, current, onClick, t }) {
+  return h('button', {
+    type: 'button',
+    className: current === true ? 'loom-session loom-session-current' : 'loom-session',
+    onClick,
+    title: summary.displayTitle || t('untitled'),
+  },
+    h('span', { className: 'loom-session-title' }, summary.displayTitle || t('untitled')),
+    summary.running === true && h(StateDot, { state: 'ongoing', size: 8 }),
+    h('span', { className: 'loom-session-time' }, sessionTime(summary, t)),
+  );
+}
+
+/** A collapsible group row: its own twisty, name, actions, and session list. */
+function LoomGroup({ row, actions, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, currentId, t }) {
+  const open = !isCollapsed;
+  const showAll = isExpanded;
+  const PREVIEW = 4;
+  const shown = showAll ? row.sessions : row.sessions.slice(0, PREVIEW);
+  const hidden = row.sessions.length - PREVIEW;
+
+  return h('div', { className: 'loom-group' },
+    h('div', { className: 'loom-group-head' },
+      h('button', {
+        type: 'button',
+        className: open ? 'loom-twisty' : 'loom-twisty loom-twisty-collapsed',
+        'aria-expanded': open,
+        'aria-label': row.title,
+        onClick: () => onToggleCollapse(row.key),
+      }, h(IconChevronDownOutline14, { size: 14 })),
+      h('button', {
+        type: 'button',
+        className: 'loom-group-name',
+        title: row.title,
+        onClick: () => onToggleCollapse(row.key),
+      }, row.title),
+      h('div', { className: 'loom-group-actions' },
+        ...(actions ?? []),
+        h('button', {
+          type: 'button',
+          className: 'loom-icon-btn',
+          title: t('newChat'),
+          'aria-label': `${t('newChat')} — ${row.title}`,
+          onClick: () => onNew(row),
+        }, h(IconPlusOutline16, { size: 16 })),
+      ),
+    ),
+
+    open && h(React.Fragment, null,
+      row.sessions.length === 0
+        ? h('div', { className: 'loom-sidebar-empty' }, t('noSessions'))
+        : shown.map(summary => h(SessionRow, {
+            key: summary.id,
+            summary,
+            current: summary.id === currentId,
+            onClick: () => onOpen(summary.id),
+            t,
+          })),
+      hidden > 0 && h('button', {
+        type: 'button',
+        className: 'loom-more',
+        onClick: () => onToggleExpand(row.key),
+      }, showAll ? t('showLess') : interpolate(t('showMore'), { count: hidden })),
+    ),
+  );
+}
+
 /**
- * Loom registers its own MAIN PANEL, addressed by a sidebar entry.
+ * The sidebar browser: 项目 / 工作区 / 聊天.
+ *
+ * Each section lists its own conversations. Selecting one opens it; each group
+ * row starts a new conversation in its declared starting folder.
+ */
+function LoomSidebar({
+  projects, snapshot, sessionState, t,
+  onOpenSession, onStartSession, onNewProject, onEditProject, onDeleteProject,
+}) {
+  const [query, setQuery] = React.useState('');
+  const [collapsed, setCollapsed] = React.useState(() => new Set());
+  const [expanded, setExpanded] = React.useState(() => new Set());
+
+  const derived = React.useMemo(
+    () => deriveSections({ projects, snapshot, sessionState }),
+    [projects, snapshot, sessionState],
+  );
+
+  const needle = query.trim().toLowerCase();
+  const keep = summary => needle === '' || String(summary.displayTitle ?? '').toLowerCase().includes(needle);
+  // A query keeps a group when the group itself matches, or when any of its
+  // sessions does — so searching a project name still shows its sessions.
+  const narrow = rows => rows
+    .map(row => ({ ...row, sessions: row.sessions.filter(keep) }))
+    .filter(row => row.sessions.length > 0
+      || (needle !== '' && String(row.title ?? '').toLowerCase().includes(needle)));
+
+  const projectRows = narrow(derived.projectRows);
+  const workspaceRows = narrow(derived.workspaceRows);
+  const chatSessions = derived.chatSessions.filter(keep);
+  const searched = needle !== '';
+  const nothing = searched && projectRows.length === 0 && workspaceRows.length === 0 && chatSessions.length === 0;
+
+  const toggle = setter => key => setter(current => {
+    const next = new Set(current);
+    if (next.has(key)) next.delete(key);
+    else next.add(key);
+    return next;
+  });
+  const toggleCollapse = toggle(setCollapsed);
+  const toggleExpand = toggle(setExpanded);
+
+  const group = row => h(LoomGroup, {
+    key: row.key,
+    row,
+    isCollapsed: collapsed.has(row.key),
+    isExpanded: expanded.has(row.key),
+    onToggleCollapse: toggleCollapse,
+    onToggleExpand: toggleExpand,
+    onOpen: onOpenSession,
+    onNew: target => onStartSession(target.startWorkspaceId),
+    currentId: sessionState?.current,
+    t,
+  });
+
+  const sectionHead = (label, action) => h('div', { className: 'loom-section-head' },
+    h('span', null, label),
+    action ?? null,
+  );
+
+  return h('div', { className: 'loom-sidebar' },
+    h('div', { className: 'loom-search' },
+      h(Input, {
+        className: 'loom-input',
+        value: query,
+        placeholder: t('searchPlaceholder'),
+        'aria-label': t('searchPlaceholder'),
+        onChange: event => setQuery(event.target.value),
+      }),
+    ),
+
+    nothing && h('div', { className: 'loom-sidebar-empty' }, t('noMatches')),
+
+    sectionHead(t('sectionProjects'),
+      h('button', {
+        type: 'button', className: 'loom-icon-btn',
+        title: t('newProject'), 'aria-label': t('newProject'), onClick: onNewProject,
+      }, h(IconPlusOutline16, { size: 16 }))),
+
+    projectRows.length === 0
+      ? h('div', { className: 'loom-sidebar-empty' }, t('noProjects'))
+      : projectRows.map(row => h(LoomGroup, {
+          key: row.key,
+          row,
+          isCollapsed: collapsed.has(row.key),
+          isExpanded: expanded.has(row.key),
+          onToggleCollapse: toggleCollapse,
+          onToggleExpand: toggleExpand,
+          onOpen: onOpenSession,
+          onNew: target => onStartSession(target.startWorkspaceId),
+          currentId: sessionState?.current,
+          t,
+          actions: [
+            h('button', {
+              key: 'folders', type: 'button', className: 'loom-icon-btn',
+              title: interpolate(t('folderCount'), { count: row.folders }),
+              'aria-label': interpolate(t('folderCount'), { count: row.folders }),
+              onClick: () => onEditProject(row.project),
+            }, h(IconEditOutline16, { size: 16 })),
+            h('button', {
+              key: 'remove', type: 'button', className: 'loom-icon-btn',
+              title: t('delete'), 'aria-label': t('delete'),
+              onClick: () => onDeleteProject(row.project),
+            }, h(IconTrashOutline16, { size: 16 })),
+          ],
+        })),
+
+    sectionHead(t('sectionWorkspaces')),
+    workspaceRows.length === 0
+      ? h('div', { className: 'loom-sidebar-empty' }, t('noWorkspaces'))
+      : workspaceRows.map(group),
+
+    sectionHead(t('sectionChats')),
+    chatSessions.length === 0
+      ? h('div', { className: 'loom-sidebar-empty' }, t('noChats'))
+      : chatSessions.map(summary => h(SessionRow, {
+          key: summary.id,
+          summary,
+          current: summary.id === sessionState?.current,
+          onClick: () => onOpenSession(summary.id),
+          t,
+        })),
+  );
+}
+
+/**
+ * Host the sidebar: own the manifest, the busy state, and the project editor.
+ *
+ * The manifest is read over the same loopback channel as the panel, so the two
+ * surfaces can never disagree about which projects exist.
+ */
+function LoomSidebarHost({ bridge, ctx }) {
+  return function LoomSidebarBound(props) {
+    const { useWorkspaces, useSessions, t: seatT } = props ?? {};
+    const t = typeof seatT === 'function' ? seatT : localTranslate(ctx);
+    const [manifest, setManifest] = React.useState(undefined);
+    const [error, setError] = React.useState('');
+    const [editing, setEditing] = React.useState(null);
+
+    const reload = React.useCallback(async () => {
+      try {
+        const value = await bridge.getManifest();
+        setManifest(value.manifest);
+        setError(value.ok === false ? String(value.error ?? '') : '');
+      } catch (cause) {
+        setError(cause.message);
+      }
+    }, [bridge]);
+
+    React.useEffect(() => { void reload(); }, [reload]);
+
+    const put = React.useCallback(async projects => {
+      try {
+        const value = await bridge.putManifest({ schemaVersion: 2, projects });
+        setManifest(value.manifest);
+      } catch (cause) {
+        setError(interpolate(t('saveFailed'), { message: cause.message }));
+      }
+    }, [bridge, t]);
+
+    const snapshot = typeof useWorkspaces === 'function' ? useWorkspaces(state => state) : undefined;
+    const sessionState = typeof useSessions === 'function' ? useSessions(state => state) : undefined;
+
+    const projects = manifest?.projects ?? [];
+
+    return h(React.Fragment, null,
+      error.length > 0 && h('div', { className: 'loom-sidebar-empty loom-warn' }, error),
+      h(LoomSidebar, {
+        projects,
+        snapshot,
+        sessionState,
+        t,
+        onOpenSession: sessionId => ctx.sessions?.open(sessionId),
+        onStartSession: workspaceId => {
+          const navigation = ctx.get('uiWorkspace');
+          if (navigation !== undefined && workspaceId !== undefined) navigation.startSession(workspaceId);
+        },
+        onNewProject: () => setEditing({}),
+        onEditProject: project => setEditing(project),
+        onDeleteProject: project => { void put(projects.filter(item => item.id !== project.id)); },
+      }),
+
+      editing !== null && h(ProjectEditor, {
+        project: editing.id === undefined ? undefined : editing,
+        workspaces: snapshot?.items ?? [],
+        onSave: project => { void put([...projects.filter(item => item.id !== project.id), project]); },
+        onClose: () => setEditing(null),
+        t,
+      }),
+    );
+  };
+}
+
+/**
  *
  * It deliberately does NOT register into `sidebar.workspaces`. That seat is
  * `kind: "single"` with `replaceRisk: "shadows-shipped-ui"`, so claiming it
@@ -810,6 +1182,29 @@ function apply(ctx) {
       stack: String(error?.stack ?? '').slice(0, 1200),
     });
   }
+
+  // The sidebar browser: 项目 / 工作区 / 聊天, each with its own conversations.
+  //
+  // This seat IS the browsing region, and priority -100 shadows the shipped
+  // browser. That is intended here, unlike the earlier attempt: the three
+  // sections CONTAIN the native workspace grouping, so nothing is taken away.
+  try {
+    ctx.slots.inject('sidebar.workspaces', contribute(ctx, bridge, 'sidebar.workspaces',
+      { name: 'sidebar.workspaces', priority: -100, locale: NS },
+      LoomSidebarHost({ bridge, ctx })));
+    report(bridge, { event: 'inject', slot: 'sidebar.workspaces', ok: true });
+  } catch (error) {
+    report(bridge, {
+      event: 'inject',
+      slot: 'sidebar.workspaces',
+      ok: false,
+      message: String(error?.message ?? error),
+      stack: String(error?.stack ?? '').slice(0, 1200),
+    });
+  }
 }
 
-module.exports = { LoomIcon, LoomPanel, PreflightPanel, ProjectEditor, apply, createBridge, inject, name, renderPlanText };
+module.exports = {
+  LoomIcon, LoomPanel, LoomSidebar, LoomSidebarHost, PreflightPanel, ProjectEditor,
+  apply, createBridge, deriveSections, inject, name, renderPlanText,
+};

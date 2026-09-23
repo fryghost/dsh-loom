@@ -74,12 +74,15 @@ test('a missing seat renders nothing instead of throwing', () => {
   assert.match(code, /typeof useWorkspaces !== 'function'/, 'must guard the seat before using it');
 });
 
-test('does NOT claim sidebar.workspaces, which would replace the shipped browser', () => {
-  assert.doesNotMatch(
-    code,
-    /name:\s*'sidebar\.workspaces'/,
-    'that seat is single + shadows-shipped-ui: claiming it removes the user\'s session list',
-  );
+test('claims sidebar.workspaces so the three sections include the native grouping', () => {
+  // This seat IS the browsing region, and claiming it shadows the shipped
+  // browser. That is correct HERE, unlike an earlier attempt that replaced the
+  // browser with a projects-only list: 项目 / 工作区 / 聊天 CONTAIN the native
+  // workspace grouping, so the user loses nothing.
+  assert.match(code, /name:\s*'sidebar\.workspaces'/,
+    'the sidebar browser is where the three sections live');
+  assert.match(code, /priority:\s*-100/, 'lowest priority renders; this must beat the shipped 0');
+  assert.match(code, /LoomSidebarHost/, 'the sections come from the Loom sidebar host');
 });
 
 test('registers a sidebar entry whose id addresses its own main panel', () => {

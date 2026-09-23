@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "build": "node build.mjs",
-    "check": "node --check src/index.js && node --check src/host/manifest-store.js && node --check src/host/skill-provider.js && node --check src/core/manifest.cjs && node --check src/core/skill-roots.cjs && node --check src/core/frontmatter.cjs && node --check src/core/context-plan.cjs",
+    "check": "node --check src/index.js && node --check src/host/manifest-store.js && node --check src/host/skill-provider.js && node --check src/client.cjs && node --check src/core/manifest.cjs && node --check src/core/skill-roots.cjs && node --check src/core/frontmatter.cjs && node --check src/core/context-plan.cjs && node --check src/core/sections.cjs",
     "test": "node --test",
     "verify": "npm run check && npm run build && npm test"
   },
