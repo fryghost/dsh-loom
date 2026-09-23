@@ -1,6 +1,6 @@
 {
   "name": "dsh-loom",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Weave many folders into one DSH project context — with a preflight that shows exactly what loads, from where, and what collides.",
   "type": "module",
   "main": "./src/index.js",

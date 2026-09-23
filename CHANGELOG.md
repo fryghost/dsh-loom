@@ -3,7 +3,7 @@
 本项目的版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 清单格式（`$DSH_HOME/projects/manifest.json` 的 `schemaVersion`）与包版本号是**两条独立的轴**：后者可以升，前者只在清单结构真的变化时才升。
 
-## [未发布]
+## [0.2.0] - 2026-09-23
 
 ### 新增
 
