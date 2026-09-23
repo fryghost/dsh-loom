@@ -15,7 +15,8 @@ const { readFileSync } = require('node:fs');
 const { join } = require('node:path');
 
 const zh = readFileSync(join(__dirname, '..', 'README.md'), 'utf8');
-const en = readFileSync(join(__dirname, '..', 'README.en.md'), 'utf8');
+// The English README lives under docs/ — only the primary README sits at the root.
+const en = readFileSync(join(__dirname, '..', 'docs', 'README.en.md'), 'utf8');
 
 /** Count non-overlapping matches of a global regexp. */
 const count = (text, re) => (text.match(re) ?? []).length;
@@ -41,6 +42,6 @@ test('both READMEs reference the same images', () => {
 });
 
 test('both READMEs link to each other', () => {
-  assert.match(zh, /\[English\]\(README\.en\.md\)/, 'the Chinese README must offer English');
-  assert.match(en, /\[中文\]\(README\.md\)/, 'the English README must offer Chinese');
+  assert.match(zh, /\[English\]\(docs\/README\.en\.md\)/, 'the Chinese README must offer English');
+  assert.match(en, /\[中文\]\(\.\.\/README\.md\)/, 'the English README must offer Chinese');
 });

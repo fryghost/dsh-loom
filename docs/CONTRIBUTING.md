@@ -41,7 +41,7 @@ CI 有一条 `bundle-freshness` 任务守这条线：它重新构建，然后 `g
 
 `npm run check` 对每个源文件跑 `node --check`（只做语法检查，不执行）。它是逐文件列出的，所以新增一个 `src/core/*.cjs` 或 `src/host/*.js` 之后，要把文件加进 `package.json` 的 `scripts.check`，否则它不会进入检查。
 
-新文件如果要在安装后可用，还得落在 `package.json` 的 `files` 里（现在列的是 `dist/client.js`、`src/index.js`、`src/host/*.js`、`src/core/*.cjs`、`cordis.patch.yml`、`README.md`、`LICENSE`、`docs/*.md`）。CI 会跑 `npm pack --dry-run`，但它只清单、不报错——漏掉的运行时文件不会让 CI 变红，只会在用户装完之后表现为缺文件。
+新文件如果要在安装后可用，还得落在 `package.json` 的 `files` 里（现在列的是 `dist/client.js`、`src/index.js`、`src/host/*.js`、`src/core/*.cjs`、`cordis.patch.yml`、`README.md`、`LICENSE`、`docs/*.md`、`docs/assets/*.png`）。CI 会跑 `npm pack --dry-run`，但它只清单、不报错——漏掉的运行时文件不会让 CI 变红，只会在用户装完之后表现为缺文件。
 
 ## 测试
 

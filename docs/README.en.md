@@ -1,15 +1,15 @@
 # dsh-loom
 
-[中文](README.md) | English
+[中文](../README.md) | English
 
 <p>
   <a href="https://github.com/fryghost/dsh-loom/actions/workflows/ci.yml"><img src="https://github.com/fryghost/dsh-loom/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
-  <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
+  <a href="../LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
 </p>
 
 **Weave several folders into one DSH project context — and, before the session starts, see exactly what it is going to load.**
 
-<img src="docs/assets/sidebar.png" alt="Loom sidebar: the Projects / Workspaces / Chats sections, each listing its own sessions" width="300">
+<img src="assets/sidebar.png" alt="Loom sidebar: the Projects / Workspaces / Chats sections, each listing its own sessions" width="300">
 
 DSH is a *harness* (reins, or a mounting frame), and the harness of a loom is precisely the part that controls the warp threads. What Loom does is weave: it draws the warp threads of several folders into one session context.
 
@@ -200,7 +200,7 @@ Deleting a workspace **removes only the registration**: it deletes no folder and
 
 ### What the starting folder is
 
-A project can name a "default starting point" — a new chat session starts there. It is **a preference, not a rank**: it gives that folder no priority in skill discovery. Multi-folder aggregation treats every member alike, and conflicts are settled by role and declaration order (see the [design notes](docs/design.md)).
+A project can name a "default starting point" — a new chat session starts there. It is **a preference, not a rank**: it gives that folder no priority in skill discovery. Multi-folder aggregation treats every member alike, and conflicts are settled by role and declaration order (see the [design notes](design.md)).
 
 ## Data and safety
 
@@ -250,7 +250,7 @@ Key measurements (`test/dsh-baseline.test.js` pins them as 9 tests):
 
 **The easiest trap to fall into**: being able to `cat` a file ≠ DSH being able to find it. Neither the `@` reference index nor `grep`/`glob` follows symlinks — the former **actively rejects** them with `lstat` at `search.ts:275`, and the latter's ripgrep argv has no `--follow`. Measured with real ripgrep 15.2.0: with and without `--follow`, the match count goes from 1 to 2.
 
-**One level deeper**: DSH does not ignore symlinks — it **deliberately makes symlinks converge identity and blocks escape**. `containment.ts:58-75` compares **device + inode** along the ancestor chain; when the cwd is an aggregate root, the members' realpath walk up never meets the aggregate root's inode, so the write is necessarily refused. That is, "**DSH considered symlinks, and therefore explicitly does not support symlinks as multiple roots**". See the [design notes](docs/design.md#30-前置事实不装插件时软链接能聚合到哪一步).
+**One level deeper**: DSH does not ignore symlinks — it **deliberately makes symlinks converge identity and blocks escape**. `containment.ts:58-75` compares **device + inode** along the ancestor chain; when the cwd is an aggregate root, the members' realpath walk up never meets the aggregate root's inode, so the write is necessarily refused. That is, "**DSH considered symlinks, and therefore explicitly does not support symlinks as multiple roots**". See the [design notes](design.md#30-前置事实不装插件时软链接能聚合到哪一步).
 
 ### If upstream fixes it, the cost is smaller than it looks
 
@@ -258,7 +258,7 @@ Key measurements (`test/dsh-baseline.test.js` pins them as 9 tests):
 
 The real friction is concentrated in **Windows ACLs**: `workspace-sid.ts` is designed on the premise of "one write SID per workspace, one ACE propagation". Multiple roots mean N SIDs, N propagations and N cleanups. bwrap / Landlock each have their own grant spelling to line up as well.
 
-Loom does not take it upon itself to bypass the security boundary, but this upstream path has a clearly better benefit/cost ratio than the first estimate suggested, and it deserves an RFC of its own. See the [design notes](docs/design.md#22-暂不做但比原先估计的小得多扩展沙箱为多根).
+Loom does not take it upon itself to bypass the security boundary, but this upstream path has a clearly better benefit/cost ratio than the first estimate suggested, and it deserves an RFC of its own. See the [design notes](design.md#22-暂不做但比原先估计的小得多扩展沙箱为多根).
 
 ### Known defect: the preflight text is Chinese only
 
@@ -374,8 +374,8 @@ DSH_CHECKOUT=/path/to/deepseek-harness npm test
 
 ## Documentation
 
-- [Design notes](docs/design.md) — why it is designed this way, the source evidence, the rejected options
-- [Migration guide](docs/migration.md) — migrating from dsh-projects
+- [Design notes](design.md) — why it is designed this way, the source evidence, the rejected options
+- [Migration guide](migration.md) — migrating from dsh-projects
 
 ## License
 

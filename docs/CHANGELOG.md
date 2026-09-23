@@ -33,8 +33,8 @@
 
 ### 已知边界
 
-- **跨文件夹写入受限**：DSH 的 `SandboxExecutionPolicy.workspaceRoot` 是单个字符串，所以 `workspace-write` 模式下只有活动文件夹可写；读取不受限制，因此跨文件夹的技能与指令聚合在任何模式下都成立。详见 [设计说明](docs/design.md)。
-- **与 `dsh-projects` 不能同时启用**：两者都注册 `sidebar.workspaces` 且都用 `priority: -100`，DSH 会在相同优先级的第二个注册上直接抛错。详见 [迁移说明](docs/migration.md)。
+- **跨文件夹写入受限**：DSH 的 `SandboxExecutionPolicy.workspaceRoot` 是单个字符串，所以 `workspace-write` 模式下只有活动文件夹可写；读取不受限制，因此跨文件夹的技能与指令聚合在任何模式下都成立。详见 [设计说明](design.md)。
+- **与 `dsh-projects` 不能同时启用**：两者都注册 `sidebar.workspaces` 且都用 `priority: -100`，DSH 会在相同优先级的第二个注册上直接抛错。详见 [迁移说明](migration.md)。
 - **区标题下方的分割线依赖 `--dsw-alias-border-l3`**：该 token 由宿主主题提供，Loom 不自带主题。
 
 ## [0.1.0]

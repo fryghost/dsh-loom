@@ -1,6 +1,6 @@
 # dsh-loom
 
-[English](README.en.md) | 中文
+[English](docs/README.en.md) | 中文
 
 <p>
   <a href="https://github.com/fryghost/dsh-loom/actions/workflows/ci.yml"><img src="https://github.com/fryghost/dsh-loom/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
