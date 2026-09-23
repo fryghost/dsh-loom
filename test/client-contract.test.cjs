@@ -122,6 +122,30 @@ test('the sidebar label follows the active locale without re-registering', () =>
 });
 
 /*
+ * Stylesheet invariants. Both of these shipped as real bugs — twice each — and
+ * neither is visible to any host-side test, so they are asserted here.
+ */
+test('the injected stylesheet survives its own template literal', () => {
+  // The whole CSS block is ONE backtick-delimited template literal, so a stray
+  // backtick inside a comment ends it early. The last rule is the sentinel: a
+  // truncated capture would stop before reaching it.
+  const styles = /const STYLES = `([\s\S]*?)`;/.exec(source);
+  assert.ok(styles !== null, 'STYLES must be a backtick-delimited template');
+  assert.match(styles[1], /\.loom-warn-note/,
+    'the stylesheet must run to its final rule — a stray backtick would cut it short');
+});
+
+test('bordered boxes count their border inside their width', () => {
+  // width: 100% on a box that has padding and a border, without border-box,
+  // overflows its container. The Input atom's wrapper is exactly that box, so
+  // this is what made the search field bleed past the sidebar's padding and the
+  // project-name field overhang the folder list beneath it.
+  const styles = /const STYLES = `([\s\S]*?)`;/.exec(source);
+  assert.match(styles[1], /\.loom-input[\s\S]{0,80}box-sizing:\s*border-box/,
+    'the full-width input wrapper must use border-box');
+});
+
+/*
  * Design-system conformance.
  *
  * The panel first shipped with hand-rolled buttons, badges, and status dots:

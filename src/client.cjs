@@ -303,6 +303,16 @@ const STYLES = `
    itself a template literal, and one would end it early.) */
 .loom-input { width: 100%; }
 
+/* Anything we give a width OR a border to must count that padding and border
+   INSIDE the width. The Input atom's wrapper carries 8px of side padding and a
+   hairline border but sets no box-sizing, so width: 100% made it 17px wider
+   than its container. That single omission is why the search field bled past
+   the sidebar's padding AND why the project-name field overhung the folder
+   list beneath it — one cause, two symptoms.
+   (No backticks anywhere in this block: it is itself a template literal.) */
+.loom-input,
+.loom-picker { box-sizing: border-box; }
+
 /* Two lines per row: the name, then the path beneath it in tertiary.
    Fitting checkbox + name + path + a radio onto ONE line is what made this
    cramped, and it forced the path into a reversed-direction truncation that
