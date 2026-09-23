@@ -392,6 +392,15 @@ const STYLES = `
 .loom-section-title:hover { color: var(--dsw-alias-label-primary); }
 .loom-section-count { font-weight: 400; color: var(--dsw-alias-label-tertiary); }
 
+/* The tree's ROOT must not be its smallest text.
+   A section label was 12px, which put it below the 14px group and session rows
+   nested under it — the hierarchy signal read backwards, and on the collapsed
+   tree those three rows are the only thing on screen. Structure is 14px at
+   every level; weight, not size, carries the depth:
+     section 600  -  group 500  -  session 400. */
+.loom-sidebar .loom-section-title { font-size: 14px; font-weight: 600; }
+.loom-sidebar .loom-section-count { font-weight: 400; }
+
 .loom-group { display: flex; flex-direction: column; }
 .loom-group-head {
   display: flex; align-items: center; gap: 6px;
