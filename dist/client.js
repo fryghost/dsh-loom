@@ -72,7 +72,11 @@ var {
   IconTrashOutline16,
   IconBranchOutline16,
   IconArchiveOutline20,
-  IconListPenOutline16
+  IconListPenOutline16,
+  IconProjectAddOutline16,
+  IconFolderOpen16,
+  IconFolderClose16,
+  IconNewChatOutline16
 } = require("@deepseek-ai/dsh-client-ui-primitives");
 var h = React.createElement;
 var NS = "dsh-loom";
@@ -390,28 +394,58 @@ var STYLES = `
      the children's guide is placed AT that centre  = 18px
    Every extra padding between those points was dead space on the left, which
    is what made the collapsed tree look indented for no reason. */
-.loom-section-head { display: flex; align-items: center; gap: 2px; margin-top: 12px; padding: 0; }
-.loom-section-head:first-of-type { margin-top: 4px; }
+/* \u2500\u2500 the section band \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+   A section header is a BAND, not a row. Three things separate it from the
+   list beneath it \u2014 a hairline above, the space that rule buys, and the
+   letter-spacing that makes the label read as a caption.
+   It deliberately does NOT compete on size with its contents. The earlier
+   version put the root of the tree at the same 14px as its leaves and tried
+   to separate them by weight alone, which at CJK stroke density is close to
+   invisible; 12px is the caption size, and 14px every row below it. */
+.loom-section-head {
+  display: flex; align-items: center; gap: 2px;
+  margin-top: 16px; padding: 6px 0 0;
+  border-top: 0.5px solid var(--dsw-alias-border-l3);
+}
+/* The first band opens the panel; a rule above it would only double the edge
+   of the search field. */
+.loom-section-head:first-of-type { margin-top: 2px; padding-top: 0; border-top: none; }
 .loom-section-title {
   flex: 1; min-width: 0;
-  display: flex; align-items: center; gap: 4px;
-  height: 28px; padding: 0 2px;
+  display: flex; align-items: center; gap: 6px;
+  height: 24px; padding: 0 2px;
   border: none; border-radius: 6px;
-  background: transparent; color: var(--dsw-alias-label-secondary);
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
   cursor: pointer; text-align: left;
-  font-size: 12px; line-height: 20px; font-weight: 500;
+  font-size: 12px; line-height: 20px; font-weight: 600;
+  letter-spacing: .04em;
 }
 .loom-section-title:hover { color: var(--dsw-alias-label-primary); }
-.loom-section-count { font-weight: 400; color: var(--dsw-alias-label-tertiary); }
+.loom-section-icon { flex: none; display: inline-flex; align-items: center; }
+.loom-section-count { font-weight: 500; letter-spacing: 0; }
 
-/* The tree's ROOT must not be its smallest text.
-   A section label was 12px, which put it below the 14px group and session rows
-   nested under it \u2014 the hierarchy signal read backwards, and on the collapsed
-   tree those three rows are the only thing on screen. Structure is 14px at
-   every level; weight, not size, carries the depth:
-     section 600  -  group 500  -  session 400. */
-.loom-sidebar .loom-section-title { font-size: 14px; font-weight: 600; }
-.loom-sidebar .loom-section-count { font-weight: 400; }
+/* \u2500\u2500 one glyph slot, two levels, the same swap \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
+   A section and a group each lead with a glyph that says what the thing IS.
+   On hover, and whenever the row is collapsed, that glyph becomes the twisty
+   that says what it DOES.
+   Both levels share this because a section header may only spend ONE glyph on
+   its lead: adding a twisty beside an icon would push the section label right
+   of its own group names, inverting the hierarchy the indent is drawing. */
+.loom-manage { flex: none; display: inline-flex; align-items: center; justify-content: center; }
+.loom-twisty {
+  flex: none; display: none; align-items: center; justify-content: center;
+  transition: transform 150ms var(--ds-ease-in-out);
+}
+/* One 16px slot, so the label does not shift by the 2px difference between a
+   16px icon and a 14px chevron when the swap happens on hover. */
+.loom-manage,
+.loom-twisty { width: 16px; height: 16px; }
+.loom-head:hover .loom-manage,
+.loom-head-collapsed .loom-manage { display: none; }
+.loom-head:hover .loom-twisty,
+.loom-head-collapsed .loom-twisty { display: inline-flex; }
+.loom-twisty-collapsed { transform: rotate(-90deg); }
 
 .loom-group { display: flex; flex-direction: column; }
 .loom-group-head {
@@ -462,6 +496,12 @@ var STYLES = `
 }
 .loom-row:hover,
 .loom-row-current { background: var(--dsw-alias-interactive-bg-hover); }
+/* The session step is the QUIET one. A group name and a session title were the
+   same colour, leaving weight alone to separate them - the weakest cue in the
+   whole panel, and at 14px CJK weight barely reads. */
+.loom-sidebar .loom-row { color: var(--dsw-alias-label-secondary); }
+.loom-sidebar .loom-row-current,
+.loom-sidebar .loom-row:hover { color: var(--dsw-alias-label-primary); }
 .loom-title {
   flex: 1; min-width: 0; margin: 0 6px 0 4px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -894,19 +934,27 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
     h(
       "div",
       {
-        className: "loom-group-head",
+        className: open ? "loom-group-head loom-head" : "loom-group-head loom-head loom-head-collapsed",
         role: "treeitem",
         "aria-expanded": open,
         onClick: () => onToggleCollapse(row.key)
       },
-      // The twisty lives in the same 16px slot every row uses, which is what
-      // the session list indents to and the guide line aligns under.
+      // The native idiom: a folder while it is just a folder, the twisty once
+      // you point at it or once it is closed — so the glyph says what the thing
+      // IS at rest and what it DOES on approach.
       h(
         "span",
         { className: "loom-slot" },
-        h("span", {
-          className: open ? "loom-twisty" : "loom-twisty loom-twisty-collapsed"
-        }, h(IconChevronDownOutline14, { size: 14 }))
+        h(
+          "span",
+          { className: "loom-manage" },
+          h(open ? IconFolderOpen16 : IconFolderClose16, { size: 16 })
+        ),
+        h(
+          "span",
+          { className: open ? "loom-twisty" : "loom-twisty loom-twisty-collapsed" },
+          h(IconChevronDownOutline14, { size: 14 })
+        )
       ),
       h("span", { className: "loom-group-name" }, row.title),
       h(
@@ -1054,7 +1102,7 @@ function LoomSidebar({
   });
   const [hiddenSections, setHiddenSections] = React.useState(() => /* @__PURE__ */ new Set());
   const toggleSection = toggle(setHiddenSections);
-  const sectionHead = (id, label, count, action) => {
+  const sectionHead = (id, label, count, action, icon) => {
     const open = !hiddenSections.has(id);
     return h(
       "div",
@@ -1063,15 +1111,19 @@ function LoomSidebar({
         "button",
         {
           type: "button",
-          className: "loom-section-title",
+          // One glyph slot: the section's own icon, which becomes the twisty on
+          // hover or once collapsed — the same swap the group rows use.
+          className: open ? "loom-section-title loom-head" : "loom-section-title loom-head loom-head-collapsed",
           "aria-expanded": open,
           title: label,
           onClick: () => toggleSection(id)
         },
-        h("span", {
-          className: open ? "loom-twisty" : "loom-twisty loom-twisty-collapsed",
-          style: { width: 16, height: 16 }
-        }, h(IconChevronDownOutline14, { size: 12 })),
+        h("span", { className: "loom-section-icon loom-manage" }, icon),
+        h(
+          "span",
+          { className: open ? "loom-twisty" : "loom-twisty loom-twisty-collapsed" },
+          h(IconChevronDownOutline14, { size: 14 })
+        ),
         h("span", null, label),
         count > 0 && h("span", { className: "loom-section-count" }, String(count))
       ),
@@ -1104,7 +1156,8 @@ function LoomSidebar({
         title: t("newProject"),
         "aria-label": t("newProject"),
         onClick: onNewProject
-      }, h(IconPlusOutline16, { size: 16 }))
+      }, h(IconPlusOutline16, { size: 16 })),
+      h(IconProjectAddOutline16, { size: 16 })
     ),
     sectionBody("projects", () => projectRows.length === 0 ? h("div", { className: "loom-empty-section" }, t("noProjects")) : projectRows.map((row) => h(LoomGroup, {
       key: row.key,
@@ -1146,10 +1199,17 @@ function LoomSidebar({
         title: t("newWorkspace"),
         "aria-label": t("newWorkspace"),
         onClick: onNewWorkspace
-      }, h(IconPlusOutline16, { size: 16 }))
+      }, h(IconPlusOutline16, { size: 16 })),
+      h(IconFolderOpenOutline16, { size: 16 })
     ),
     sectionBody("workspaces", () => workspaceRows.length === 0 ? h("div", { className: "loom-empty-section" }, t("noWorkspaces")) : workspaceRows.map(group)),
-    sectionHead("chats", t("sectionChats"), chatSessions.length),
+    sectionHead(
+      "chats",
+      t("sectionChats"),
+      chatSessions.length,
+      null,
+      h(IconNewChatOutline16, { size: 16 })
+    ),
     sectionBody("chats", () => chatSessions.length === 0 ? h("div", { className: "loom-empty-section" }, t("noChats")) : h(
       "div",
       { className: "loom-children loom-children-section" },
