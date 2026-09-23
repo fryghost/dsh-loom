@@ -284,6 +284,18 @@ function contribute(ctx, bridge, slot, options, component) {
 function roleLabel(t, role) {
   return role === "readonly" ? t("readonly") : t("writable");
 }
+function localTranslate(ctx) {
+  return (key, values) => {
+    let active = "en";
+    try {
+      active = ctx.locale.getLocale().active;
+    } catch {
+    }
+    const table = dictionaries[active] ?? dictionaries.en;
+    const template = table?.[key] ?? dictionaries.en?.[key] ?? key;
+    return values === void 0 ? template : interpolate(template, values);
+  };
+}
 function PreflightPanel({ plan, t, onRefresh, busy }) {
   const [copied, setCopied] = React.useState(false);
   const copy = React.useCallback(async () => {
@@ -638,7 +650,7 @@ function LoomPanel({ bridge, workspaces, t }) {
 }
 var name = "dsh-loom";
 var inject = ["slots", "locale", "workspaces", "connection"];
-function LoomPanelHost({ bridge }) {
+function LoomPanelHost({ bridge, ctx }) {
   function LoomPanelSeated({ useWorkspaces, t }) {
     const state = useWorkspaces((snapshot) => snapshot);
     return h(LoomPanel, { bridge, workspaces: state?.items ?? [], t });
@@ -648,7 +660,11 @@ function LoomPanelHost({ bridge }) {
     if (typeof useWorkspaces !== "function") return null;
     return h(LoomPanelSeated, {
       useWorkspaces,
-      t: typeof t === "function" ? t : (key) => key
+      // The panel owns its dictionaries, so it translates from them directly
+      // against the active locale. That keeps the `t` seat optional: the main
+      // registration carries no `locale`, because no shipped example passes one
+      // to `main` and the panel must not depend on a seat it may not be given.
+      t: typeof t === "function" ? t : localTranslate(ctx)
     });
   };
 }
@@ -667,7 +683,7 @@ function apply(ctx) {
   ctx.effect(installStyles, "dsh-loom: styles");
   ctx.effect(() => ctx.locale.register(NS, dictionaries), "dsh-loom: dictionaries");
   const bridge = createBridge(ctx);
-  const Panel = LoomPanelHost({ bridge });
+  const Panel = LoomPanelHost({ bridge, ctx });
   const probe = (read) => {
     try {
       return read();
@@ -700,7 +716,9 @@ function apply(ctx) {
       ctx,
       bridge,
       "main",
-      { name: "main", key: "loom", locale: NS },
+      // No `locale`: the panel translates from its own dictionaries, and no
+      // shipped `main` registration passes a namespace to a keyed panel slot.
+      { name: "main", key: "loom" },
       Panel
     ));
     report(bridge, { event: "inject", slot: "main", ok: true });

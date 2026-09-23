@@ -326,6 +326,26 @@ function roleLabel(t, role) {
   return role === 'readonly' ? t('readonly') : t('writable');
 }
 
+/**
+ * Translate from the panel's own dictionaries against the active locale.
+ *
+ * Used when the slot supplies no `t` seat. The panel owns these dictionaries
+ * anyway, so reading them directly is both exact and one less dependency.
+ */
+function localTranslate(ctx) {
+  return (key, values) => {
+    let active = 'en';
+    try {
+      active = ctx.locale.getLocale().active;
+    } catch {
+      // An unreadable locale falls back to English rather than blanking text.
+    }
+    const table = dictionaries[active] ?? dictionaries.en;
+    const template = table?.[key] ?? dictionaries.en?.[key] ?? key;
+    return values === undefined ? template : interpolate(template, values);
+  };
+}
+
 /** The preflight panel: the reason this plugin exists. */
 function PreflightPanel({ plan, t, onRefresh, busy }) {
   const [copied, setCopied] = React.useState(false);
@@ -665,7 +685,7 @@ const inject = ['slots', 'locale', 'workspaces', 'connection'];
  * panel would simply never appear, with no visible error. The seat check is
  * therefore defensive: a missing seat renders nothing rather than throwing.
  */
-function LoomPanelHost({ bridge }) {
+function LoomPanelHost({ bridge, ctx }) {
   /** Mounted only once the seat is known to exist, so the hook is unconditional here. */
   function LoomPanelSeated({ useWorkspaces, t }) {
     const state = useWorkspaces(snapshot => snapshot);
@@ -677,7 +697,11 @@ function LoomPanelHost({ bridge }) {
     if (typeof useWorkspaces !== 'function') return null;
     return h(LoomPanelSeated, {
       useWorkspaces,
-      t: typeof t === 'function' ? t : key => key,
+      // The panel owns its dictionaries, so it translates from them directly
+      // against the active locale. That keeps the `t` seat optional: the main
+      // registration carries no `locale`, because no shipped example passes one
+      // to `main` and the panel must not depend on a seat it may not be given.
+      t: typeof t === 'function' ? t : localTranslate(ctx),
     });
   };
 }
@@ -719,7 +743,7 @@ function apply(ctx) {
   ctx.effect(() => ctx.locale.register(NS, dictionaries), 'dsh-loom: dictionaries');
 
   const bridge = createBridge(ctx);
-  const Panel = LoomPanelHost({ bridge });
+  const Panel = LoomPanelHost({ bridge, ctx });
 
   /** Read a slot fact without letting a missing method break the diagnostic. */
   const probe = read => {
@@ -759,7 +783,9 @@ function apply(ctx) {
   // user never clicked the icon".
   try {
     ctx.slots.inject('main', contribute(ctx, bridge, 'main',
-      { name: 'main', key: 'loom', locale: NS }, Panel));
+      // No `locale`: the panel translates from its own dictionaries, and no
+      // shipped `main` registration passes a namespace to a keyed panel slot.
+      { name: 'main', key: 'loom' }, Panel));
     report(bridge, { event: 'inject', slot: 'main', ok: true });
   } catch (error) {
     report(bridge, {

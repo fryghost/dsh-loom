@@ -48,11 +48,16 @@ test('the client half never calls a translate method on the locale service', () 
   );
 });
 
-test('every registration that renders translated text names the locale namespace', () => {
+test('the client half registers the locale namespace so t is synthesized', () => {
   assert.match(code, /ctx\.locale\.register\(\s*NS/, 'the namespace must be registered');
-  const named = code.match(/locale:\s*NS/g) ?? [];
-  assert.ok(named.length >= 2,
-    'both the sidebar entry and the main panel render through t, so both need locale: NS');
+  assert.match(code, /locale:\s*NS/, 'the sidebar entry renders through a localized label');
+});
+
+test('the panel translates from its own dictionaries when no t seat is supplied', () => {
+  // The main registration deliberately carries no `locale`, so the panel must
+  // be able to label itself without the synthesized seat.
+  assert.match(code, /function localTranslate\(/, 'must own a fallback translator');
+  assert.match(code, /dictionaries\[active\]/, 'the fallback reads the active locale table');
 });
 
 test('the panel reads its seats from props rather than reaching for services', () => {
