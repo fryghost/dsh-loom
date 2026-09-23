@@ -101,15 +101,16 @@ test('claims sidebar.workspaces so the three sections include the native groupin
   assert.match(code, /LoomSidebarHost/, 'the sections come from the Loom sidebar host');
 });
 
-test('registers a sidebar entry whose id addresses its own main panel', () => {
-  const panelId = /name:\s*'sidebar\.panellist'[\s\S]{0,220}?id:\s*'([^']+)'/.exec(code);
-  const mainKey = /name:\s*'main'[\s\S]{0,140}?key:\s*'([^']+)'/.exec(code);
-  assert.ok(panelId !== null, 'must register an icon in sidebar.panellist');
-  assert.ok(mainKey !== null, 'must register a panel in the keyed main slot');
-  assert.equal(panelId[1], mainKey[1],
-    'the sidebar id addresses the main key: they must match or selecting the entry throws');
-  assert.notEqual(panelId[1], 'conversation',
-    'the reserved key hosts the Conversation and must not be replaced');
+test('registers NO sidebar entry or main panel', () => {
+  // Both were removed. The project list was already covered by the sidebar's
+  // 项目 section, so the panel only duplicated it — and the panellist entry cost
+  // a permanent row in the shell's GLOBAL navigation, pushing the session
+  // browser down even for sessions with no project at all.
+  assert.doesNotMatch(code, /name:\s*'sidebar\.panellist'/,
+    'a global navigation row is too expensive for a duplicate project list');
+  assert.doesNotMatch(code, /name:\s*'main'/,
+    'no main panel is registered: the preflight is a per-project dialog now');
+  assert.match(code, /PreflightModal/, 'the preflight must still be reachable');
 });
 
 test('the sidebar label follows the active locale without re-registering', () => {

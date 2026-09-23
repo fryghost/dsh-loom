@@ -26,7 +26,7 @@ const {
   Button, Tag, StateDot, Modal, Input, Menu,
   IconFolderOpenOutline16, IconPlusOutline16, IconChevronDownOutline14,
   IconEllipsisOutline16, IconEditOutline16, IconTrashOutline16,
-  IconBranchOutline16, IconArchiveOutline20,
+  IconBranchOutline16, IconArchiveOutline20, IconListPenOutline16,
 } = require('@deepseek-ai/dsh-client-ui-primitives');
 
 const h = React.createElement;
@@ -114,6 +114,9 @@ const dictionaries = {
     renameWorkspace: '重命名工作区',
     deleteWorkspace: '删除工作区',
     workspaceActions: '工作区操作',
+    projectActions: '项目操作',
+    close: '关闭',
+    deleteProjectHint: '只移除这个项目分组，不会删除文件夹或会话记录。',
     deleteWorkspaceHint: '只移除这个工作区登记，不会删除文件夹或会话记录。',
     pickFolderFailed: '没有选择文件夹。',
   },
@@ -195,6 +198,9 @@ const dictionaries = {
     renameWorkspace: 'Rename workspace',
     deleteWorkspace: 'Delete workspace',
     workspaceActions: 'Workspace actions',
+    projectActions: 'Project actions',
+    close: 'Close',
+    deleteProjectHint: 'Removes this grouping only; folders and session logs are kept.',
     deleteWorkspaceHint: 'Removes the registration only; folders and session logs are kept.',
     pickFolderFailed: 'No folder was selected.',
   },
@@ -209,66 +215,10 @@ const dictionaries = {
  * matching `--dsw-alias-*` tokens rather than fixed colors.
  */
 const STYLES = `
-.loom-panel {
-  height: 100%; overflow-y: auto;
-  padding: 24px;
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px; line-height: 22px;
-}
-.loom-inner {
-  display: flex; flex-direction: column; gap: 20px;
-  width: 100%; max-width: 720px; margin: 0 auto;
-}
 
-.loom-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.loom-head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.loom-h1 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }
-.loom-sub { margin: 0; color: var(--dsw-alias-label-secondary); }
-
-.loom-card {
-  display: flex; flex-direction: column;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  background: var(--dsw-alias-bg-layer-1);
-  border-radius: 16px; overflow: hidden;
-}
-.loom-card-head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; padding: 14px 16px;
-}
-.loom-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.loom-name {
-  font-size: 14px; line-height: 20px; font-weight: 500;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.loom-card-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-
-.loom-members { display: flex; flex-direction: column; border-top: 0.5px solid var(--dsw-alias-border-l3); }
-.loom-member { display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
-.loom-member + .loom-member { border-top: 0.5px solid var(--dsw-alias-border-l3); }
-.loom-member-name { flex: none; }
-/* Normal left-to-right truncation. A reversed direction showed the tail of a
-   long path but rendered as a torn fragment ("…seek\\dsh-project"), which read
-   as breakage rather than as an ellipsis. */
-.loom-member-path {
-  flex: 1; min-width: 0;
-  color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.loom-empty {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 48px 24px; text-align: center;
-  border: 0.5px dashed var(--dsw-alias-border-l3); border-radius: 16px;
-}
-.loom-empty-title { font-size: 14px; line-height: 20px; font-weight: 500; }
-.loom-empty-hint { color: var(--dsw-alias-label-secondary); max-width: 46ch; }
-
-.loom-preflight {
-  display: flex; flex-direction: column; gap: 16px;
-  padding: 16px;
-  border-top: 0.5px solid var(--dsw-alias-border-l3);
-  background: var(--dsw-alias-bg-layer-2);
-}
+/* No card chrome of its own any more: the preflight is a dialog now, and the
+   Modal atom already supplies the surface and the padding. */
+.loom-preflight { display: flex; flex-direction: column; gap: 16px; }
 .loom-preflight-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .loom-boundary { color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 22px; }
 
@@ -278,8 +228,11 @@ const STYLES = `
   display: flex; align-items: center; gap: 6px;
 }
 .loom-section-title.loom-warn { color: var(--dsw-alias-state-warn-primary); }
-.loom-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
-.loom-row + .loom-row { margin-top: 2px; }
+/* Preflight rows. Named distinctly because plain loom-row is ALSO the
+   sidebar's session row, and two rules sharing one name meant the later block
+   silently restyled the preflight into 32px session geometry. */
+.loom-preflight-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
+.loom-preflight-row + .loom-preflight-row { margin-top: 2px; }
 .loom-src {
   color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px;
   word-break: break-all;
@@ -355,7 +308,6 @@ const STYLES = `
   flex: none; display: flex; align-items: center; gap: 6px;
   font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary);
 }
-.loom-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 
 /* ── sidebar browser: 项目 / 工作区 / 聊天 ─────────────────────────
    TWO rules govern this block. Both come from the shipped surfaces rather than
@@ -485,8 +437,7 @@ const STYLES = `
 }
 .loom-more:hover { color: var(--dsw-alias-label-primary); }
 .loom-empty-section { padding: 2px 8px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px; }
-.loom-warn-note { padding: 2px 8px; color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }
-`;
+.loom-warn-note { padding: 2px 8px; color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }`;
 
 function installStyles() {
   const id = 'loom-styles';
@@ -620,7 +571,7 @@ function PreflightPanel({ plan, t, onRefresh, busy }) {
         plan.skills.length === 0
           ? h('div', { className: 'loom-muted' }, t('noSkills'))
           : plan.skills.map(skill => h('div', { key: `${skill.workspaceId}:${skill.name}` },
-              h('div', { className: 'loom-row' }, h('span', null, skill.name)),
+              h('div', { className: 'loom-preflight-row' }, h('span', null, skill.name)),
               h('div', { className: 'loom-src' }, `${t('from')} ${skill.workspaceId} — ${skill.path}`),
             )),
       ),
@@ -630,11 +581,11 @@ function PreflightPanel({ plan, t, onRefresh, busy }) {
         h('div', { className: 'loom-section-title loom-warn' }, `${t('collisions')} · ${plan.collisions.length}`),
         h('div', { className: 'loom-muted' }, t('collisionHint')),
         plan.collisions.map(collision => h('div', { key: collision.name },
-          h('div', { className: 'loom-row' },
+          h('div', { className: 'loom-preflight-row' },
             h('span', null, collision.name),
             h(Tag, { tone: 'success' }, `${t('winner')} ${collision.winner.workspaceId}`),
           ),
-          collision.shadowed.map(shadowed => h('div', { key: shadowed.workspaceId, className: 'loom-row' },
+          collision.shadowed.map(shadowed => h('div', { key: shadowed.workspaceId, className: 'loom-preflight-row' },
             h(Tag, { tone: 'warning' }, `${t('shadowed')} ${shadowed.workspaceId}`),
           )),
         )),
@@ -653,7 +604,7 @@ function PreflightPanel({ plan, t, onRefresh, busy }) {
         h('div', { className: 'loom-section-title loom-warn' }, `${t('silentFolders')} · ${plan.silent.length}`),
         h('div', { className: 'loom-muted' }, t('silentHint')),
         plan.silent.map((entry, index) => h('div', { key: `${entry.workspaceId}-${index}` },
-          h('div', { className: 'loom-row' },
+          h('div', { className: 'loom-preflight-row' },
             h(StateDot, { state: 'warning' }),
             h('span', null, entry.workspaceId),
           ),
@@ -800,188 +751,10 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
   );
 }
 
-/** Main panel: project list plus the preflight for the selected project. */
-function LoomPanel({ bridge, workspaces, t }) {
-  const [manifest, setManifest] = React.useState(undefined);
-  const [loadError, setLoadError] = React.useState('');
-  const [unsupported, setUnsupported] = React.useState(false);
-  const [editing, setEditing] = React.useState(null);
-  const [plan, setPlan] = React.useState(undefined);
-  const [busy, setBusy] = React.useState(false);
-
-  const reload = React.useCallback(async () => {
-    try {
-      const value = await bridge.getManifest();
-      setManifest(value.manifest);
-      setLoadError(value.ok === false ? String(value.error ?? '') : '');
-      setUnsupported(/newer than supported/.test(String(value.error ?? '')));
-    } catch (error) {
-      setLoadError(error.message);
-    }
-  }, [bridge]);
-
-  React.useEffect(() => { void reload(); }, [reload]);
-
-  const runPreflight = React.useCallback(async projectId => {
-    setBusy(true);
-    setPlan(undefined);
-    try {
-      const value = await bridge.preflight(projectId);
-      setPlan(value.plan);
-    } catch (error) {
-      setLoadError(error.message);
-      setPlan(undefined);
-    } finally {
-      setBusy(false);
-    }
-  }, [bridge]);
-
-  const saveProject = React.useCallback(async project => {
-    if (manifest === undefined) return;
-    const projects = [...manifest.projects.filter(item => item.id !== project.id), project];
-    try {
-      const value = await bridge.putManifest({ schemaVersion: 2, projects });
-      setManifest(value.manifest);
-    } catch (error) {
-      setLoadError(interpolate(t('saveFailed'), { message: error.message }));
-    }
-  }, [bridge, manifest, t]);
-
-  const deleteProject = React.useCallback(async projectId => {
-    if (manifest === undefined) return;
-    try {
-      const value = await bridge.putManifest({
-        schemaVersion: 2,
-        projects: manifest.projects.filter(item => item.id !== projectId),
-      });
-      setManifest(value.manifest);
-      setPlan(undefined);
-    } catch (error) {
-      setLoadError(interpolate(t('saveFailed'), { message: error.message }));
-    }
-  }, [bridge, manifest, t]);
-
-  const projects = manifest?.projects ?? [];
-
-  return h('div', { className: 'loom-panel' },
-    h('div', { className: 'loom-inner' },
-      h('div', { className: 'loom-head' },
-        h('div', { className: 'loom-head-text' },
-          h('h1', { className: 'loom-h1' }, t('projects')),
-          h('p', { className: 'loom-sub' }, t('subtitle')),
-        ),
-        h(Button, { variant: 'primary', onClick: () => setEditing({}) }, t('newProject')),
-      ),
-
-      unsupported && h('div', { className: 'loom-warn' }, t('unsupported')),
-      loadError.length > 0 && h('div', { className: 'loom-warn' }, interpolate(t('loadFailed'), { message: loadError })),
-
-      projects.length === 0
-        ? h('div', { className: 'loom-empty' },
-            h('div', { className: 'loom-empty-title' }, t('emptyTitle')),
-            h('div', { className: 'loom-empty-hint' }, t('emptyHint')),
-            h(Button, { variant: 'outline', onClick: () => setEditing({}) }, t('newProject')),
-          )
-        : projects.map(project => h('div', { key: project.id, className: 'loom-card' },
-            h('div', { className: 'loom-card-head' },
-              h('div', { className: 'loom-card-title' },
-                h('span', { className: 'loom-name' }, project.title),
-                h(Tag, null, interpolate(t('memberCount'), { count: project.members.length })),
-              ),
-              h('div', { className: 'loom-card-actions' },
-                h(Button, { variant: 'outline', size: 'sm', onClick: () => runPreflight(project.id), disabled: busy }, t('preflight')),
-                h(Button, { variant: 'ghost', size: 'sm', onClick: () => setEditing(project) }, t('edit')),
-                h(Button, { variant: 'ghost', size: 'sm', onClick: () => deleteProject(project.id) }, t('delete')),
-              ),
-            ),
-
-            // Every member is listed, including the ones that contribute
-            // nothing: a member that resolved but added no skill is exactly
-            // what the preflight exists to expose.
-            h('div', { className: 'loom-members' },
-              project.members.map(member => h('div', { key: member.workspaceId, className: 'loom-member' },
-                h(StateDot, { state: member.missing === true ? 'warning' : 'done' }),
-                h('span', { className: 'loom-member-name' }, member.workspaceId),
-                h('span', { className: 'loom-member-path', title: member.path }, member.path ?? ''),
-                h(Tag, { tone: member.role === 'readonly' ? 'quiet' : 'neutral' }, roleLabel(t, member.role)),
-                member.missing === true && h(Tag, { tone: 'warning' }, t('missing')),
-              )),
-            ),
-
-            plan !== undefined && plan.projectId === project.id && h(PreflightPanel, {
-              plan, t, busy, onRefresh: () => runPreflight(project.id),
-            }),
-          )),
-
-      editing !== null && h(ProjectEditor, {
-        project: editing.id === undefined ? undefined : editing,
-        workspaces,
-        onSave: saveProject,
-        onClose: () => setEditing(null),
-        t,
-      }),
-    ),
-  );
-}
-
 const name = 'dsh-loom';
 // `sessions` and `uiWorkspace` are hard dependencies: the browser's whole point
 // is navigating to a session, and the navigation face is what clears the panel.
 const inject = ['slots', 'locale', 'workspaces', 'sessions', 'uiWorkspace', 'connection'];
-
-/**
- * Bind the panel to the seats the slot machinery provides.
- *
- * A slot hands its component two standard props: `useWorkspaces` (the client
- * workspace store hook) and `t` (synthesized from the `locale` namespace named
- * on the registration). Reading them from props is required, not stylistic:
- * `ctx.locale` exposes `register`/`getLocale`/`setLocale` and has NO `t`, so
- * reaching for `ctx.locale.t(...)` throws on the first render.
- *
- * That distinction is expensive here. A slot entry that crashes mid-render is
- * ABDICATED — `SlotCore.reportEntryError` retires it from its cell — so the
- * panel would simply never appear, with no visible error. The seat check is
- * therefore defensive: a missing seat renders nothing rather than throwing.
- */
-function LoomPanelHost({ bridge, ctx }) {
-  /** Mounted only once the seat is known to exist, so the hook is unconditional here. */
-  function LoomPanelSeated({ useWorkspaces, t }) {
-    const state = useWorkspaces(snapshot => snapshot);
-    return h(LoomPanel, { bridge, workspaces: state?.items ?? [], t });
-  }
-
-  return function LoomPanelBound(props) {
-    const { useWorkspaces, t } = props ?? {};
-    if (typeof useWorkspaces !== 'function') return null;
-    return h(LoomPanelSeated, {
-      useWorkspaces,
-      // The panel owns its dictionaries, so it translates from them directly
-      // against the active locale. That keeps the `t` seat optional: the main
-      // registration carries no `locale`, because no shipped example passes one
-      // to `main` and the panel must not depend on a seat it may not be given.
-      t: typeof t === 'function' ? t : localTranslate(ctx),
-    });
-  };
-}
-
-/**
- * The sidebar entry's icon.
- *
- * `sidebar.panellist` supplies `{ size, active }`. A shipped icon is used
- * rather than a hand-drawn one so the glyph matches the family's 16px grid and
- * weight exactly; `currentColor` keeps the shell in charge of color states.
- */
-function LoomIcon({ size, active }) {
-  const edge = typeof size === 'number' ? size : 16;
-  return h('span', {
-    style: {
-      display: 'inline-flex',
-      alignItems: 'center',
-      justifyContent: 'center',
-      opacity: active === false ? 0.7 : 1,
-    },
-  }, h(IconFolderOpenOutline16, { size: edge }));
-}
 
 /** Compact age for a session row, in the panel's own copy. */
 function sessionTime(summary, t) {
@@ -1144,9 +917,49 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
  * Each section lists its own conversations. Selecting one opens it; each group
  * row starts a new conversation in its declared starting folder.
  */
+/**
+ * The context preflight, as a dialog opened from one project's row menu.
+ *
+ * It used to live in a `main` panel that also listed projects, which cost a
+ * permanent entry in the shell's global navigation for something that answers
+ * one question about one project. A dialog is the right shape: it reports, then
+ * closes, and leaves the browsing column to browsing.
+ */
+function PreflightModal({ project, bridge, t, onClose }) {
+  const [plan, setPlan] = React.useState(undefined);
+  const [busy, setBusy] = React.useState(true);
+
+  const run = React.useCallback(async () => {
+    setBusy(true);
+    try {
+      const value = await bridge.preflight(project.id);
+      setPlan(value.plan);
+    } catch {
+      // A failed preflight leaves the running state; the dialog stays open so
+      // the reason is not lost behind a closed window.
+      setPlan(undefined);
+    } finally {
+      setBusy(false);
+    }
+  }, [bridge, project.id]);
+
+  React.useEffect(() => { void run(); }, [run]);
+
+  return h(Modal, {
+    open: true,
+    onClose,
+    title: t('preflight'),
+    description: project.title,
+    closeLabel: t('close'),
+    // The wide card: a preflight lists skill paths and collision sources.
+    className: 'loom-editor',
+  }, h(PreflightPanel, { plan, t, busy, onRefresh: run }));
+}
+
 function LoomSidebar({
   projects, snapshot, sessionState, t,
   onOpenSession, onStartSession, onNewProject, onEditProject, onDeleteProject,
+  onPreflightProject,
   onRenameSession, onForkSession, onArchiveSession,
   onNewWorkspace, onRenameWorkspace, onDeleteWorkspace,
 }) {
@@ -1278,19 +1091,21 @@ function LoomSidebar({
           onArchive: onArchiveSession,
           currentId: sessionState?.current,
           t,
-          actions: [
-            h('button', {
-              key: 'folders', type: 'button', className: 'loom-icon-btn',
-              title: interpolate(t('folderCount'), { count: row.folders }),
-              'aria-label': interpolate(t('folderCount'), { count: row.folders }),
-              onClick: event => { event.stopPropagation(); onEditProject(row.project); },
-            }, h(IconEditOutline16, { size: 16 })),
-            h('button', {
-              key: 'remove', type: 'button', className: 'loom-icon-btn',
-              title: t('delete'), 'aria-label': t('delete'),
-              onClick: event => { event.stopPropagation(); onDeleteProject(row.project); },
-            }, h(IconTrashOutline16, { size: 16 })),
-          ],
+          // One ellipsis, matching the shipped row affordance. The preflight lives
+          // here because it is a verb on a project, not a place to navigate to.
+          menu: {
+            label: t('projectActions'),
+            items: [
+              { id: 'preflight', label: t('preflight'), icon: h(IconListPenOutline16, null) },
+              { id: 'edit', label: t('edit'), icon: h(IconEditOutline16, null) },
+              { id: 'delete', label: t('delete'), icon: h(IconTrashOutline16, null), danger: true },
+            ],
+            onSelect: id => {
+              if (id === 'preflight') onPreflightProject(row.project);
+              if (id === 'edit') onEditProject(row.project);
+              if (id === 'delete') onDeleteProject(row.project);
+            },
+          },
         })))),
 
     sectionHead('workspaces', t('sectionWorkspaces'), workspaceRows.length,
@@ -1325,13 +1140,15 @@ function LoomSidebar({
  * surfaces can never disagree about which projects exist.
  */
 function LoomSidebarHost({ bridge, ctx }) {
-  return function LoomSidebarBound(props) {
-    const { useWorkspaces, useSessions, t: seatT } = props ?? {};
-    const t = typeof seatT === 'function' ? seatT : localTranslate(ctx);
+  /** Mounted only once both seats are known to exist, so its hooks are unconditional. */
+  function LoomSidebarSeated({ useWorkspaces, useSessions, bridge, ctx, t }) {
+    const snapshot = useWorkspaces(state => state);
+    const sessionState = useSessions(state => state);
     const [manifest, setManifest] = React.useState(undefined);
     const [error, setError] = React.useState('');
     const [editing, setEditing] = React.useState(null);
     const [renaming, setRenaming] = React.useState(null);
+    const [preflighting, setPreflighting] = React.useState(null);
 
     const reload = React.useCallback(async () => {
       try {
@@ -1354,13 +1171,10 @@ function LoomSidebarHost({ bridge, ctx }) {
       }
     }, [bridge, t]);
 
-    const snapshot = typeof useWorkspaces === 'function' ? useWorkspaces(state => state) : undefined;
-    const sessionState = typeof useSessions === 'function' ? useSessions(state => state) : undefined;
-
     const projects = manifest?.projects ?? [];
 
     return h(React.Fragment, null,
-      error.length > 0 && h('div', { className: 'loom-sidebar-empty loom-warn' }, error),
+      error.length > 0 && h('div', { className: 'loom-empty-section loom-warn' }, error),
       h(LoomSidebar, {
         projects,
         snapshot,
@@ -1386,6 +1200,7 @@ function LoomSidebarHost({ bridge, ctx }) {
         onNewProject: () => setEditing({}),
         onEditProject: project => setEditing(project),
         onDeleteProject: project => { void put(projects.filter(item => item.id !== project.id)); },
+        onPreflightProject: project => setPreflighting(project),
 
         // Session verbs. `rename` is a per-session property, not a list verb, so
         // it resolves the session binding first — the list store has no rename.
@@ -1425,6 +1240,13 @@ function LoomSidebarHost({ bridge, ctx }) {
           // session logs, so this needs no confirmation dialog.
           void ctx.workspaces.delete(workspaceId).catch(() => {});
         },
+      }),
+
+      preflighting !== null && h(PreflightModal, {
+        project: preflighting,
+        bridge,
+        t,
+        onClose: () => setPreflighting(null),
       }),
 
       renaming !== null && h(Modal, {
@@ -1472,27 +1294,48 @@ function LoomSidebarHost({ bridge, ctx }) {
         t,
       }),
     );
+  }
+
+  /**
+   * The seat check.
+   *
+   * It must happen BEFORE the seated component mounts, not inside it: a hook
+   * called conditionally changes the hook order between renders, which React
+   * treats as a crash. Checking here and mounting Seated only on success is what
+   * keeps every hook in that component unconditional.
+   */
+  return function LoomSidebarBound(props) {
+    const { useWorkspaces, useSessions, t: seatT } = props ?? {};
+    if (typeof useWorkspaces !== 'function' || typeof useSessions !== 'function') return null;
+    return h(LoomSidebarSeated, {
+      useWorkspaces,
+      useSessions,
+      bridge,
+      ctx,
+      // The panel owns its dictionaries, so a missing seat still translates.
+      t: typeof seatT === 'function' ? seatT : localTranslate(ctx),
+    });
   };
 }
 
 /**
+ * Loom contributes exactly ONE surface: the sidebar browser.
  *
- * It deliberately does NOT register into `sidebar.workspaces`. That seat is
- * `kind: "single"` with `replaceRisk: "shadows-shipped-ui"`, so claiming it
- * REPLACES the shipped workspace/session browser rather than adding to it: the
- * session list vanishes and the user loses their navigation. The additive shape
- * is a `sidebar.panellist` entry whose id addresses a `main` key — which is
- * exactly how the shell pairs an icon with a centre panel.
+ * It claims `sidebar.workspaces` at priority -100, which shadows the shipped
+ * browser. That is intended — 项目 / 工作区 / 聊天 CONTAIN the native workspace
+ * grouping, so nothing is taken away, unlike an earlier attempt that replaced
+ * the browser with a projects-only list.
  *
- * `main` is keyed and only `conversation` is reserved, so `loom` sits beside
- * the Conversation without touching it.
+ * It registers NOTHING in `main` or `sidebar.panellist`: the project list is
+ * already covered by the sidebar's 项目 section, so a panel would duplicate it
+ * while costing a permanent row in the shell's global navigation. The preflight
+ * is a per-project dialog opened from that project's row menu.
  */
 function apply(ctx) {
   ctx.effect(installStyles, 'dsh-loom: styles');
   ctx.effect(() => ctx.locale.register(NS, dictionaries), 'dsh-loom: dictionaries');
 
   const bridge = createBridge(ctx);
-  const Panel = LoomPanelHost({ bridge, ctx });
 
   /** Read a slot fact without letting a missing method break the diagnostic. */
   const probe = read => {
@@ -1517,48 +1360,17 @@ function apply(ctx) {
     panellistEpoch: probe(() => ctx.slots.declarationEpoch('sidebar.panellist')),
   });
 
-  // A thunk is re-read on every projection, so the label follows the active
-  // locale without re-registering.
-  const label = () => {
-    try {
-      return ctx.locale.getLocale().active === 'zh' ? '项目' : 'Projects';
-    } catch {
-      return 'Projects';
-    }
-  };
-
-  // Both registrations are reported. `slots.inject` retires a throwing
-  // contribution silently, so an unreported failure looks exactly like "the
-  // user never clicked the icon".
-  try {
-    ctx.slots.inject('main', contribute(ctx, bridge, 'main',
-      // No `locale`: the panel translates from its own dictionaries, and no
-      // shipped `main` registration passes a namespace to a keyed panel slot.
-      { name: 'main', key: 'loom' }, Panel));
-    report(bridge, { event: 'inject', slot: 'main', ok: true });
-  } catch (error) {
-    report(bridge, {
-      event: 'inject',
-      slot: 'main',
-      ok: false,
-      message: String(error?.message ?? error),
-      stack: String(error?.stack ?? '').slice(0, 1200),
-    });
-  }
-
-  try {
-    ctx.slots.inject('sidebar.panellist', contribute(ctx, bridge, 'sidebar.panellist',
-      { name: 'sidebar.panellist', id: 'loom', order: 40, locale: NS, label }, LoomIcon));
-    report(bridge, { event: 'inject', slot: 'sidebar.panellist', ok: true });
-  } catch (error) {
-    report(bridge, {
-      event: 'inject',
-      slot: 'sidebar.panellist',
-      ok: false,
-      message: String(error?.message ?? error),
-      stack: String(error?.stack ?? '').slice(0, 1200),
-    });
-  }
+  // Nothing is registered in `main` or `sidebar.panellist`, deliberately.
+  //
+  // Both were removed together with the panel they served. The project list was
+  // already covered by the sidebar's 项目 section, so the panel only duplicated
+  // it — and the panellist entry cost a permanent row in the shell's GLOBAL
+  // navigation, pushing the session browser down for every session, including
+  // the ones that have nothing to do with a project.
+  //
+  // The one thing that panel could do and the sidebar cannot is the context
+  // preflight, and that is a per-project action rather than a destination. It
+  // now opens from the project row's own menu, beside its other verbs.
 
   // The sidebar browser: 项目 / 工作区 / 聊天, each with its own conversations.
   //
@@ -1582,6 +1394,6 @@ function apply(ctx) {
 }
 
 module.exports = {
-  LoomIcon, LoomPanel, LoomSidebar, LoomSidebarHost, PreflightPanel, ProjectEditor,
+  LoomSidebar, LoomSidebarHost, PreflightModal, PreflightPanel, ProjectEditor,
   apply, createBridge, deriveSections, inject, name, renderPlanText,
 };

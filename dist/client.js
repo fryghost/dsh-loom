@@ -71,7 +71,8 @@ var {
   IconEditOutline16,
   IconTrashOutline16,
   IconBranchOutline16,
-  IconArchiveOutline20
+  IconArchiveOutline20,
+  IconListPenOutline16
 } = require("@deepseek-ai/dsh-client-ui-primitives");
 var h = React.createElement;
 var NS = "dsh-loom";
@@ -156,6 +157,9 @@ var dictionaries = {
     renameWorkspace: "\u91CD\u547D\u540D\u5DE5\u4F5C\u533A",
     deleteWorkspace: "\u5220\u9664\u5DE5\u4F5C\u533A",
     workspaceActions: "\u5DE5\u4F5C\u533A\u64CD\u4F5C",
+    projectActions: "\u9879\u76EE\u64CD\u4F5C",
+    close: "\u5173\u95ED",
+    deleteProjectHint: "\u53EA\u79FB\u9664\u8FD9\u4E2A\u9879\u76EE\u5206\u7EC4\uFF0C\u4E0D\u4F1A\u5220\u9664\u6587\u4EF6\u5939\u6216\u4F1A\u8BDD\u8BB0\u5F55\u3002",
     deleteWorkspaceHint: "\u53EA\u79FB\u9664\u8FD9\u4E2A\u5DE5\u4F5C\u533A\u767B\u8BB0\uFF0C\u4E0D\u4F1A\u5220\u9664\u6587\u4EF6\u5939\u6216\u4F1A\u8BDD\u8BB0\u5F55\u3002",
     pickFolderFailed: "\u6CA1\u6709\u9009\u62E9\u6587\u4EF6\u5939\u3002"
   },
@@ -237,71 +241,18 @@ var dictionaries = {
     renameWorkspace: "Rename workspace",
     deleteWorkspace: "Delete workspace",
     workspaceActions: "Workspace actions",
+    projectActions: "Project actions",
+    close: "Close",
+    deleteProjectHint: "Removes this grouping only; folders and session logs are kept.",
     deleteWorkspaceHint: "Removes the registration only; folders and session logs are kept.",
     pickFolderFailed: "No folder was selected."
   }
 };
 var STYLES = `
-.loom-panel {
-  height: 100%; overflow-y: auto;
-  padding: 24px;
-  color: var(--dsw-alias-label-primary);
-  font-size: 14px; line-height: 22px;
-}
-.loom-inner {
-  display: flex; flex-direction: column; gap: 20px;
-  width: 100%; max-width: 720px; margin: 0 auto;
-}
 
-.loom-head { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; }
-.loom-head-text { display: flex; flex-direction: column; gap: 4px; min-width: 0; }
-.loom-h1 { margin: 0; font-size: 16px; line-height: 24px; font-weight: 500; }
-.loom-sub { margin: 0; color: var(--dsw-alias-label-secondary); }
-
-.loom-card {
-  display: flex; flex-direction: column;
-  border: 0.5px solid var(--dsw-alias-border-l3);
-  background: var(--dsw-alias-bg-layer-1);
-  border-radius: 16px; overflow: hidden;
-}
-.loom-card-head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 12px; padding: 14px 16px;
-}
-.loom-card-title { display: flex; align-items: center; gap: 8px; min-width: 0; }
-.loom-name {
-  font-size: 14px; line-height: 20px; font-weight: 500;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-.loom-card-actions { display: flex; align-items: center; gap: 8px; flex: none; }
-
-.loom-members { display: flex; flex-direction: column; border-top: 0.5px solid var(--dsw-alias-border-l3); }
-.loom-member { display: flex; align-items: center; gap: 8px; padding: 10px 16px; }
-.loom-member + .loom-member { border-top: 0.5px solid var(--dsw-alias-border-l3); }
-.loom-member-name { flex: none; }
-/* Normal left-to-right truncation. A reversed direction showed the tail of a
-   long path but rendered as a torn fragment ("\u2026seek\\dsh-project"), which read
-   as breakage rather than as an ellipsis. */
-.loom-member-path {
-  flex: 1; min-width: 0;
-  color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px;
-  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-}
-
-.loom-empty {
-  display: flex; flex-direction: column; align-items: center; gap: 8px;
-  padding: 48px 24px; text-align: center;
-  border: 0.5px dashed var(--dsw-alias-border-l3); border-radius: 16px;
-}
-.loom-empty-title { font-size: 14px; line-height: 20px; font-weight: 500; }
-.loom-empty-hint { color: var(--dsw-alias-label-secondary); max-width: 46ch; }
-
-.loom-preflight {
-  display: flex; flex-direction: column; gap: 16px;
-  padding: 16px;
-  border-top: 0.5px solid var(--dsw-alias-border-l3);
-  background: var(--dsw-alias-bg-layer-2);
-}
+/* No card chrome of its own any more: the preflight is a dialog now, and the
+   Modal atom already supplies the surface and the padding. */
+.loom-preflight { display: flex; flex-direction: column; gap: 16px; }
 .loom-preflight-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .loom-boundary { color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 22px; }
 
@@ -311,8 +262,11 @@ var STYLES = `
   display: flex; align-items: center; gap: 6px;
 }
 .loom-section-title.loom-warn { color: var(--dsw-alias-state-warn-primary); }
-.loom-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
-.loom-row + .loom-row { margin-top: 2px; }
+/* Preflight rows. Named distinctly because plain loom-row is ALSO the
+   sidebar's session row, and two rules sharing one name meant the later block
+   silently restyled the preflight into 32px session geometry. */
+.loom-preflight-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
+.loom-preflight-row + .loom-preflight-row { margin-top: 2px; }
 .loom-src {
   color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px;
   word-break: break-all;
@@ -388,7 +342,6 @@ var STYLES = `
   flex: none; display: flex; align-items: center; gap: 6px;
   font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary);
 }
-.loom-check { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 
 /* \u2500\u2500 sidebar browser: \u9879\u76EE / \u5DE5\u4F5C\u533A / \u804A\u5929 \u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500\u2500
    TWO rules govern this block. Both come from the shipped surfaces rather than
@@ -518,8 +471,7 @@ var STYLES = `
 }
 .loom-more:hover { color: var(--dsw-alias-label-primary); }
 .loom-empty-section { padding: 2px 8px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px; }
-.loom-warn-note { padding: 2px 8px; color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }
-`;
+.loom-warn-note { padding: 2px 8px; color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }`;
 function installStyles() {
   const id = "loom-styles";
   if (typeof document === "undefined") return () => {
@@ -580,9 +532,6 @@ function contribute(ctx, bridge, slot, options, component) {
     }
   };
 }
-function roleLabel(t, role) {
-  return role === "readonly" ? t("readonly") : t("writable");
-}
 function localTranslate(ctx) {
   return (key, values) => {
     let active = "en";
@@ -634,7 +583,7 @@ function PreflightPanel({ plan, t, onRefresh, busy }) {
         plan.skills.length === 0 ? h("div", { className: "loom-muted" }, t("noSkills")) : plan.skills.map((skill) => h(
           "div",
           { key: `${skill.workspaceId}:${skill.name}` },
-          h("div", { className: "loom-row" }, h("span", null, skill.name)),
+          h("div", { className: "loom-preflight-row" }, h("span", null, skill.name)),
           h("div", { className: "loom-src" }, `${t("from")} ${skill.workspaceId} \u2014 ${skill.path}`)
         ))
       ),
@@ -649,13 +598,13 @@ function PreflightPanel({ plan, t, onRefresh, busy }) {
           { key: collision.name },
           h(
             "div",
-            { className: "loom-row" },
+            { className: "loom-preflight-row" },
             h("span", null, collision.name),
             h(Tag, { tone: "success" }, `${t("winner")} ${collision.winner.workspaceId}`)
           ),
           collision.shadowed.map((shadowed) => h(
             "div",
-            { key: shadowed.workspaceId, className: "loom-row" },
+            { key: shadowed.workspaceId, className: "loom-preflight-row" },
             h(Tag, { tone: "warning" }, `${t("shadowed")} ${shadowed.workspaceId}`)
           ))
         ))
@@ -681,7 +630,7 @@ function PreflightPanel({ plan, t, onRefresh, busy }) {
           { key: `${entry.workspaceId}-${index}` },
           h(
             "div",
-            { className: "loom-row" },
+            { className: "loom-preflight-row" },
             h(StateDot, { state: "warning" }),
             h("span", null, entry.workspaceId)
           ),
@@ -829,172 +778,8 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
     error.length > 0 && h("div", { className: "loom-warn-note" }, error)
   );
 }
-function LoomPanel({ bridge, workspaces, t }) {
-  const [manifest, setManifest] = React.useState(void 0);
-  const [loadError, setLoadError] = React.useState("");
-  const [unsupported, setUnsupported] = React.useState(false);
-  const [editing, setEditing] = React.useState(null);
-  const [plan, setPlan] = React.useState(void 0);
-  const [busy, setBusy] = React.useState(false);
-  const reload = React.useCallback(async () => {
-    try {
-      const value = await bridge.getManifest();
-      setManifest(value.manifest);
-      setLoadError(value.ok === false ? String(value.error ?? "") : "");
-      setUnsupported(/newer than supported/.test(String(value.error ?? "")));
-    } catch (error) {
-      setLoadError(error.message);
-    }
-  }, [bridge]);
-  React.useEffect(() => {
-    void reload();
-  }, [reload]);
-  const runPreflight = React.useCallback(async (projectId) => {
-    setBusy(true);
-    setPlan(void 0);
-    try {
-      const value = await bridge.preflight(projectId);
-      setPlan(value.plan);
-    } catch (error) {
-      setLoadError(error.message);
-      setPlan(void 0);
-    } finally {
-      setBusy(false);
-    }
-  }, [bridge]);
-  const saveProject = React.useCallback(async (project) => {
-    if (manifest === void 0) return;
-    const projects2 = [...manifest.projects.filter((item) => item.id !== project.id), project];
-    try {
-      const value = await bridge.putManifest({ schemaVersion: 2, projects: projects2 });
-      setManifest(value.manifest);
-    } catch (error) {
-      setLoadError(interpolate(t("saveFailed"), { message: error.message }));
-    }
-  }, [bridge, manifest, t]);
-  const deleteProject = React.useCallback(async (projectId) => {
-    if (manifest === void 0) return;
-    try {
-      const value = await bridge.putManifest({
-        schemaVersion: 2,
-        projects: manifest.projects.filter((item) => item.id !== projectId)
-      });
-      setManifest(value.manifest);
-      setPlan(void 0);
-    } catch (error) {
-      setLoadError(interpolate(t("saveFailed"), { message: error.message }));
-    }
-  }, [bridge, manifest, t]);
-  const projects = manifest?.projects ?? [];
-  return h(
-    "div",
-    { className: "loom-panel" },
-    h(
-      "div",
-      { className: "loom-inner" },
-      h(
-        "div",
-        { className: "loom-head" },
-        h(
-          "div",
-          { className: "loom-head-text" },
-          h("h1", { className: "loom-h1" }, t("projects")),
-          h("p", { className: "loom-sub" }, t("subtitle"))
-        ),
-        h(Button, { variant: "primary", onClick: () => setEditing({}) }, t("newProject"))
-      ),
-      unsupported && h("div", { className: "loom-warn" }, t("unsupported")),
-      loadError.length > 0 && h("div", { className: "loom-warn" }, interpolate(t("loadFailed"), { message: loadError })),
-      projects.length === 0 ? h(
-        "div",
-        { className: "loom-empty" },
-        h("div", { className: "loom-empty-title" }, t("emptyTitle")),
-        h("div", { className: "loom-empty-hint" }, t("emptyHint")),
-        h(Button, { variant: "outline", onClick: () => setEditing({}) }, t("newProject"))
-      ) : projects.map((project) => h(
-        "div",
-        { key: project.id, className: "loom-card" },
-        h(
-          "div",
-          { className: "loom-card-head" },
-          h(
-            "div",
-            { className: "loom-card-title" },
-            h("span", { className: "loom-name" }, project.title),
-            h(Tag, null, interpolate(t("memberCount"), { count: project.members.length }))
-          ),
-          h(
-            "div",
-            { className: "loom-card-actions" },
-            h(Button, { variant: "outline", size: "sm", onClick: () => runPreflight(project.id), disabled: busy }, t("preflight")),
-            h(Button, { variant: "ghost", size: "sm", onClick: () => setEditing(project) }, t("edit")),
-            h(Button, { variant: "ghost", size: "sm", onClick: () => deleteProject(project.id) }, t("delete"))
-          )
-        ),
-        // Every member is listed, including the ones that contribute
-        // nothing: a member that resolved but added no skill is exactly
-        // what the preflight exists to expose.
-        h(
-          "div",
-          { className: "loom-members" },
-          project.members.map((member) => h(
-            "div",
-            { key: member.workspaceId, className: "loom-member" },
-            h(StateDot, { state: member.missing === true ? "warning" : "done" }),
-            h("span", { className: "loom-member-name" }, member.workspaceId),
-            h("span", { className: "loom-member-path", title: member.path }, member.path ?? ""),
-            h(Tag, { tone: member.role === "readonly" ? "quiet" : "neutral" }, roleLabel(t, member.role)),
-            member.missing === true && h(Tag, { tone: "warning" }, t("missing"))
-          ))
-        ),
-        plan !== void 0 && plan.projectId === project.id && h(PreflightPanel, {
-          plan,
-          t,
-          busy,
-          onRefresh: () => runPreflight(project.id)
-        })
-      )),
-      editing !== null && h(ProjectEditor, {
-        project: editing.id === void 0 ? void 0 : editing,
-        workspaces,
-        onSave: saveProject,
-        onClose: () => setEditing(null),
-        t
-      })
-    )
-  );
-}
 var name = "dsh-loom";
 var inject = ["slots", "locale", "workspaces", "sessions", "uiWorkspace", "connection"];
-function LoomPanelHost({ bridge, ctx }) {
-  function LoomPanelSeated({ useWorkspaces, t }) {
-    const state = useWorkspaces((snapshot) => snapshot);
-    return h(LoomPanel, { bridge, workspaces: state?.items ?? [], t });
-  }
-  return function LoomPanelBound(props) {
-    const { useWorkspaces, t } = props ?? {};
-    if (typeof useWorkspaces !== "function") return null;
-    return h(LoomPanelSeated, {
-      useWorkspaces,
-      // The panel owns its dictionaries, so it translates from them directly
-      // against the active locale. That keeps the `t` seat optional: the main
-      // registration carries no `locale`, because no shipped example passes one
-      // to `main` and the panel must not depend on a seat it may not be given.
-      t: typeof t === "function" ? t : localTranslate(ctx)
-    });
-  };
-}
-function LoomIcon({ size, active }) {
-  const edge = typeof size === "number" ? size : 16;
-  return h("span", {
-    style: {
-      display: "inline-flex",
-      alignItems: "center",
-      justifyContent: "center",
-      opacity: active === false ? 0.7 : 1
-    }
-  }, h(IconFolderOpenOutline16, { size: edge }));
-}
 function sessionTime(summary, t) {
   const at = summary?.updatedAt;
   if (typeof at !== "number") return "";
@@ -1147,6 +932,33 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
     )
   );
 }
+function PreflightModal({ project, bridge, t, onClose }) {
+  const [plan, setPlan] = React.useState(void 0);
+  const [busy, setBusy] = React.useState(true);
+  const run = React.useCallback(async () => {
+    setBusy(true);
+    try {
+      const value = await bridge.preflight(project.id);
+      setPlan(value.plan);
+    } catch {
+      setPlan(void 0);
+    } finally {
+      setBusy(false);
+    }
+  }, [bridge, project.id]);
+  React.useEffect(() => {
+    void run();
+  }, [run]);
+  return h(Modal, {
+    open: true,
+    onClose,
+    title: t("preflight"),
+    description: project.title,
+    closeLabel: t("close"),
+    // The wide card: a preflight lists skill paths and collision sources.
+    className: "loom-editor"
+  }, h(PreflightPanel, { plan, t, busy, onRefresh: run }));
+}
 function LoomSidebar({
   projects,
   snapshot,
@@ -1157,6 +969,7 @@ function LoomSidebar({
   onNewProject,
   onEditProject,
   onDeleteProject,
+  onPreflightProject,
   onRenameSession,
   onForkSession,
   onArchiveSession,
@@ -1285,30 +1098,21 @@ function LoomSidebar({
       onArchive: onArchiveSession,
       currentId: sessionState?.current,
       t,
-      actions: [
-        h("button", {
-          key: "folders",
-          type: "button",
-          className: "loom-icon-btn",
-          title: interpolate(t("folderCount"), { count: row.folders }),
-          "aria-label": interpolate(t("folderCount"), { count: row.folders }),
-          onClick: (event) => {
-            event.stopPropagation();
-            onEditProject(row.project);
-          }
-        }, h(IconEditOutline16, { size: 16 })),
-        h("button", {
-          key: "remove",
-          type: "button",
-          className: "loom-icon-btn",
-          title: t("delete"),
-          "aria-label": t("delete"),
-          onClick: (event) => {
-            event.stopPropagation();
-            onDeleteProject(row.project);
-          }
-        }, h(IconTrashOutline16, { size: 16 }))
-      ]
+      // One ellipsis, matching the shipped row affordance. The preflight lives
+      // here because it is a verb on a project, not a place to navigate to.
+      menu: {
+        label: t("projectActions"),
+        items: [
+          { id: "preflight", label: t("preflight"), icon: h(IconListPenOutline16, null) },
+          { id: "edit", label: t("edit"), icon: h(IconEditOutline16, null) },
+          { id: "delete", label: t("delete"), icon: h(IconTrashOutline16, null), danger: true }
+        ],
+        onSelect: (id) => {
+          if (id === "preflight") onPreflightProject(row.project);
+          if (id === "edit") onEditProject(row.project);
+          if (id === "delete") onDeleteProject(row.project);
+        }
+      }
     }))),
     sectionHead(
       "workspaces",
@@ -1337,40 +1141,39 @@ function LoomSidebar({
   );
 }
 function LoomSidebarHost({ bridge, ctx }) {
-  return function LoomSidebarBound(props) {
-    const { useWorkspaces, useSessions, t: seatT } = props ?? {};
-    const t = typeof seatT === "function" ? seatT : localTranslate(ctx);
+  function LoomSidebarSeated({ useWorkspaces, useSessions, bridge: bridge2, ctx: ctx2, t }) {
+    const snapshot = useWorkspaces((state) => state);
+    const sessionState = useSessions((state) => state);
     const [manifest, setManifest] = React.useState(void 0);
     const [error, setError] = React.useState("");
     const [editing, setEditing] = React.useState(null);
     const [renaming, setRenaming] = React.useState(null);
+    const [preflighting, setPreflighting] = React.useState(null);
     const reload = React.useCallback(async () => {
       try {
-        const value = await bridge.getManifest();
+        const value = await bridge2.getManifest();
         setManifest(value.manifest);
         setError(value.ok === false ? String(value.error ?? "") : "");
       } catch (cause) {
         setError(cause.message);
       }
-    }, [bridge]);
+    }, [bridge2]);
     React.useEffect(() => {
       void reload();
     }, [reload]);
     const put = React.useCallback(async (projects2) => {
       try {
-        const value = await bridge.putManifest({ schemaVersion: 2, projects: projects2 });
+        const value = await bridge2.putManifest({ schemaVersion: 2, projects: projects2 });
         setManifest(value.manifest);
       } catch (cause) {
         setError(interpolate(t("saveFailed"), { message: cause.message }));
       }
-    }, [bridge, t]);
-    const snapshot = typeof useWorkspaces === "function" ? useWorkspaces((state) => state) : void 0;
-    const sessionState = typeof useSessions === "function" ? useSessions((state) => state) : void 0;
+    }, [bridge2, t]);
     const projects = manifest?.projects ?? [];
     return h(
       React.Fragment,
       null,
-      error.length > 0 && h("div", { className: "loom-sidebar-empty loom-warn" }, error),
+      error.length > 0 && h("div", { className: "loom-empty-section loom-warn" }, error),
       h(LoomSidebar, {
         projects,
         snapshot,
@@ -1384,13 +1187,13 @@ function LoomSidebarHost({ bridge, ctx }) {
         // sets the current session but leaves whatever panel was selected in
         // place — which strands the user on the Loom panel with no way back.
         onOpenSession: (sessionId) => {
-          const navigation = ctx.get("uiWorkspace");
+          const navigation = ctx2.get("uiWorkspace");
           if (navigation !== void 0) navigation.openSession(sessionId);
         },
         // `startSession` additionally inherits the current session's workspace
         // before the recent-workspace fallback, so it is the right verb here too.
         onStartSession: (workspaceId) => {
-          const navigation = ctx.get("uiWorkspace");
+          const navigation = ctx2.get("uiWorkspace");
           if (navigation !== void 0 && workspaceId !== void 0) navigation.startSession(workspaceId);
         },
         onNewProject: () => setEditing({}),
@@ -1398,37 +1201,44 @@ function LoomSidebarHost({ bridge, ctx }) {
         onDeleteProject: (project) => {
           void put(projects.filter((item) => item.id !== project.id));
         },
+        onPreflightProject: (project) => setPreflighting(project),
         // Session verbs. `rename` is a per-session property, not a list verb, so
         // it resolves the session binding first — the list store has no rename.
         onRenameSession: (sessionId, currentTitle) => setRenaming({ kind: "session", id: sessionId, title: currentTitle }),
         onForkSession: (sessionId) => {
-          const navigation = ctx.get("uiWorkspace");
+          const navigation = ctx2.get("uiWorkspace");
           if (navigation !== void 0) navigation.forkSession(sessionId).catch(() => {
           });
         },
         onArchiveSession: (sessionId) => {
-          const navigation = ctx.get("uiWorkspace");
+          const navigation = ctx2.get("uiWorkspace");
           if (navigation !== void 0) void navigation.archiveSession(sessionId);
         },
         // Workspace verbs. A Workspace is the shell's own object, so these go
         // through DSH's services rather than through Loom's manifest: Loom
         // groups existing Workspaces and never mutates them.
         onNewWorkspace: async () => {
-          const navigation = ctx.get("uiWorkspace");
+          const navigation = ctx2.get("uiWorkspace");
           if (navigation === void 0) return;
           try {
             const picked = await navigation.pickDirectory();
             if (typeof picked !== "string" || picked.length === 0) return;
-            await ctx.workspaces.create({ path: picked });
+            await ctx2.workspaces.create({ path: picked });
           } catch (cause) {
             setError(interpolate(t("saveFailed"), { message: cause.message }));
           }
         },
         onRenameWorkspace: (workspaceId, currentTitle) => setRenaming({ kind: "workspace", id: workspaceId, title: currentTitle }),
         onDeleteWorkspace: (workspaceId) => {
-          void ctx.workspaces.delete(workspaceId).catch(() => {
+          void ctx2.workspaces.delete(workspaceId).catch(() => {
           });
         }
+      }),
+      preflighting !== null && h(PreflightModal, {
+        project: preflighting,
+        bridge: bridge2,
+        t,
+        onClose: () => setPreflighting(null)
       }),
       renaming !== null && h(
         Modal,
@@ -1451,10 +1261,10 @@ function LoomSidebarHost({ bridge, ctx }) {
                 setRenaming(null);
                 if (next.length === 0) return;
                 if (target.kind === "session") {
-                  const session = ctx.sessions?.binding(target.id)?.session;
+                  const session = ctx2.sessions?.binding(target.id)?.session;
                   if (session !== void 0) void session.rename(next);
                 } else {
-                  void ctx.workspaces.rename(target.id, next).catch(() => {
+                  void ctx2.workspaces.rename(target.id, next).catch(() => {
                   });
                 }
               }
@@ -1479,13 +1289,24 @@ function LoomSidebarHost({ bridge, ctx }) {
         t
       })
     );
+  }
+  return function LoomSidebarBound(props) {
+    const { useWorkspaces, useSessions, t: seatT } = props ?? {};
+    if (typeof useWorkspaces !== "function" || typeof useSessions !== "function") return null;
+    return h(LoomSidebarSeated, {
+      useWorkspaces,
+      useSessions,
+      bridge,
+      ctx,
+      // The panel owns its dictionaries, so a missing seat still translates.
+      t: typeof seatT === "function" ? seatT : localTranslate(ctx)
+    });
   };
 }
 function apply(ctx) {
   ctx.effect(installStyles, "dsh-loom: styles");
   ctx.effect(() => ctx.locale.register(NS, dictionaries), "dsh-loom: dictionaries");
   const bridge = createBridge(ctx);
-  const Panel = LoomPanelHost({ bridge, ctx });
   const probe = (read) => {
     try {
       return read();
@@ -1506,51 +1327,6 @@ function apply(ctx) {
     panellistSpec: probe(() => ctx.slots.spec("sidebar.panellist") !== void 0),
     panellistEpoch: probe(() => ctx.slots.declarationEpoch("sidebar.panellist"))
   });
-  const label = () => {
-    try {
-      return ctx.locale.getLocale().active === "zh" ? "\u9879\u76EE" : "Projects";
-    } catch {
-      return "Projects";
-    }
-  };
-  try {
-    ctx.slots.inject("main", contribute(
-      ctx,
-      bridge,
-      "main",
-      // No `locale`: the panel translates from its own dictionaries, and no
-      // shipped `main` registration passes a namespace to a keyed panel slot.
-      { name: "main", key: "loom" },
-      Panel
-    ));
-    report(bridge, { event: "inject", slot: "main", ok: true });
-  } catch (error) {
-    report(bridge, {
-      event: "inject",
-      slot: "main",
-      ok: false,
-      message: String(error?.message ?? error),
-      stack: String(error?.stack ?? "").slice(0, 1200)
-    });
-  }
-  try {
-    ctx.slots.inject("sidebar.panellist", contribute(
-      ctx,
-      bridge,
-      "sidebar.panellist",
-      { name: "sidebar.panellist", id: "loom", order: 40, locale: NS, label },
-      LoomIcon
-    ));
-    report(bridge, { event: "inject", slot: "sidebar.panellist", ok: true });
-  } catch (error) {
-    report(bridge, {
-      event: "inject",
-      slot: "sidebar.panellist",
-      ok: false,
-      message: String(error?.message ?? error),
-      stack: String(error?.stack ?? "").slice(0, 1200)
-    });
-  }
   try {
     ctx.slots.inject("sidebar.workspaces", contribute(
       ctx,
@@ -1571,10 +1347,9 @@ function apply(ctx) {
   }
 }
 module.exports = {
-  LoomIcon,
-  LoomPanel,
   LoomSidebar,
   LoomSidebarHost,
+  PreflightModal,
   PreflightPanel,
   ProjectEditor,
   apply,
