@@ -16,9 +16,11 @@
     "src/core/*.cjs",
     "cordis.patch.yml",
     "README.md",
+    "README.en.md",
     "CHANGELOG.md",
     "LICENSE",
-    "docs/*.md"
+    "docs/*.md",
+    "docs/assets/*.png"
   ],
   "scripts": {
     "build": "node build.mjs",

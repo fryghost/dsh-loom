@@ -1,5 +1,7 @@
 # dsh-loom
 
+[English](README.en.md) | 中文
+
 <p>
   <a href="https://github.com/fryghost/dsh-loom/actions/workflows/ci.yml"><img src="https://github.com/fryghost/dsh-loom/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-MIT-blue.svg" alt="License"></a>
@@ -32,7 +34,7 @@ Loom 不是它的复刻，而是换了一条实现路线：**不去改 cwd，而
 这是 Loom 存在的理由。多文件夹项目最难的不是"合并"，而是**你看不见合并的结果**。所以 Loom 在会话开始前就把答案摆出来：
 
 ```
-项目：厦门TOD璞瑞装修（3 个文件夹）
+项目：厦门TOD璞瑞（3 个文件夹）
 活动文件夹：ws-a
 
 技能（4）
@@ -154,17 +156,19 @@ dsh plugin --profile web remove dsh-loom
 侧边栏的浏览区被 Loom 接管，分成三段。**一个会话只出现在一段里**，不重复、不漏：
 
 ```
-▾ 项目  2                                  +
+▾ 项目  3                                  +
   ▾ 厦门TOD璞瑞                    ⋯
         核对尺寸并推进渲染图      12 小时
   ▾ dsh-project
         优化 DSH 项目多文件夹合并插件  11 分钟
-▾ 工作区  7                                +
+▾ 工作区  5                                +
   ▾ wecom_workspace                ⋯
         [WeCom private chat message…    2 小时
 ▾ 聊天  4
       [WeCom private chat message…      15 天
 ```
+
+> 上面这段是**结构示意**（数字与上面那张真实截图不完全一致——截图里「厦门TOD璞瑞」是收起的，且「聊天」段在折叠线以下）。真实观感以截图为准。
 
 | 段 | 收哪些会话 |
 |---|---|
@@ -255,6 +259,14 @@ DSH 里挂在 `cwd` 上的不是一个子系统，而是**七个**，它们对�
 真正的阻力集中在 **Windows ACL**：`workspace-sid.ts` 的设计前提就是"每个 workspace 一个写 SID、一次 ACE 传播"。多根意味着 N 个 SID、N 份传播与回收。bwrap / Landlock 也各有 grant 拼写需对齐。
 
 Loom 不擅自绕过安全边界，但这条上游路径的收益/成本比明显好于初判，值得单独提 RFC。详见 [设计说明](docs/design.md#22-暂不做但比原先估计的小得多扩展沙箱为多根)。
+
+### 已知缺陷：预检文字只有中文
+
+客户端的界面文案是双语的（`src/client.cjs` 里的 `dictionaries` 有 `zh`/`en` 两套）。**但上下文预检里的文字是硬编码中文**，英文界面下会看到中文句子被英文标签包着。
+
+来源在宿主侧：`src/core/context-plan.cjs` 直接产出了**成品句子**而不是结构化数据——写入边界说明（`describeWriteBoundary`，第 62/70/77/84 行）、静默成员的理由（第 127/170/196 行），以及整份文本报告（`formatContextPlan`）。
+
+这是设计问题而不是漏翻：**一个纯函数不该产出某一语言的散文。** 正确的修法是让它返回描述符（模式、可写成员、理由键），由客户端用自己的字典渲染。目前**未修**——它需要同时改动核心逻辑、客户端渲染与相应测试，不做未经验证的半成品。
 
 ## 架构
 
