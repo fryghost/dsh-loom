@@ -273,8 +273,11 @@ const STYLES = `
 
 .loom-field { display: flex; flex-direction: column; gap: 8px; }
 .loom-field-label { font-size: 13px; font-weight: 500; }
-/* The Input atom owns its own chrome; only the width is local. */
-.loom-input { width: 100%; }
+/* The Input atom owns the field's chrome; the panel owns its width. My class
+   lands on the atom's WRAPPER, so the inner field needs the width too — setting
+   only the wrapper left the visible box at its intrinsic size. */
+.loom-input { display: block; width: 100%; }
+.loom-input input { width: 100%; box-sizing: border-box; }
 .loom-picker {
   display: flex; flex-direction: column;
   border: 0.5px solid var(--dsw-alias-border-l3);
@@ -289,17 +292,26 @@ const STYLES = `
 .loom-sidebar {
   display: flex; flex-direction: column;
   height: 100%; overflow-y: auto;
-  padding: 6px 6px 12px;
+  padding: 8px 6px 16px;
   color: var(--dsw-alias-label-primary);
   font-size: 13px; line-height: 20px;
 }
-.loom-search { padding: 2px 2px 6px; }
-.loom-section-head {
-  display: flex; align-items: center; justify-content: space-between;
-  gap: 6px; padding: 12px 8px 4px;
+.loom-search { padding: 0 2px 8px; }
+
+/* A section header is itself the collapse control. */
+.loom-section-head { display: flex; align-items: center; gap: 2px; margin-top: 10px; padding: 0 2px; }
+.loom-section-head:first-of-type { margin-top: 2px; }
+.loom-section-title {
+  flex: 1; min-width: 0;
+  display: flex; align-items: center; gap: 4px;
+  padding: 4px; border: none; border-radius: 6px;
+  background: transparent; text-align: left; cursor: pointer;
   color: var(--dsw-alias-label-secondary);
-  font-size: 11px; font-weight: 600; letter-spacing: .04em;
+  font: inherit; font-size: 11px; font-weight: 600; letter-spacing: .04em;
 }
+.loom-section-title:hover { color: var(--dsw-alias-label-primary); }
+.loom-section-count { font-weight: 400; opacity: .8; }
+
 .loom-group { display: flex; flex-direction: column; }
 .loom-group-head {
   display: flex; align-items: center; gap: 2px;
@@ -315,8 +327,8 @@ const STYLES = `
 .loom-twisty-collapsed { transform: rotate(-90deg); }
 .loom-group-name {
   flex: 1; min-width: 0; text-align: left;
-  padding: 2px 0; border: none; border-radius: 6px;
-  background: transparent; color: inherit; font: inherit; cursor: pointer;
+  padding: 3px 0; border: none; border-radius: 6px;
+  background: transparent; color: inherit; font: inherit; font-weight: 500; cursor: pointer;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .loom-group-actions { display: flex; align-items: center; gap: 1px; flex: none; opacity: 0; }
@@ -328,16 +340,20 @@ const STYLES = `
   background: transparent; color: var(--dsw-alias-label-secondary); cursor: pointer;
 }
 .loom-icon-btn:hover { background: var(--dsw-alias-bg-layer-2); color: var(--dsw-alias-label-primary); }
+
+/* Sessions are inset under their group so the hierarchy is visible at a glance. */
 .loom-session {
   display: flex; align-items: center; gap: 8px;
   width: 100%; text-align: left;
   padding: 5px 8px 5px 26px; border: none; border-radius: 8px;
-  background: transparent; color: inherit; font: inherit; cursor: pointer;
+  background: transparent; color: var(--dsw-alias-label-secondary); font: inherit; cursor: pointer;
 }
-.loom-session:hover { background: var(--dsw-alias-interactive-bg-hover); }
-.loom-session-current { background: var(--dsw-alias-interactive-bg-active); }
+.loom-session:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
+.loom-session-current { background: var(--dsw-alias-interactive-bg-active); color: var(--dsw-alias-label-primary); }
 .loom-session-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.loom-session-time { flex: none; color: var(--dsw-alias-label-secondary); font-size: 11px; }
+.loom-session-time { flex: none; font-size: 11px; opacity: .75; }
+.loom-chat { padding-left: 8px; }
+
 .loom-more {
   padding: 4px 8px 6px 26px; border: none; border-radius: 8px;
   background: transparent; color: var(--dsw-alias-label-secondary);
@@ -345,6 +361,7 @@ const STYLES = `
 }
 .loom-more:hover { background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-label-primary); }
 .loom-sidebar-empty { padding: 4px 8px 8px 26px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
+.loom-empty-section { padding: 2px 8px 6px 14px; color: var(--dsw-alias-label-secondary); font-size: 12px; }
 `;
 
 function installStyles() {
@@ -767,8 +784,9 @@ function LoomPanel({ bridge, workspaces, t }) {
 }
 
 const name = 'dsh-loom';
-// `sessions` is a hard dependency: the browser's whole point is opening one.
-const inject = ['slots', 'locale', 'workspaces', 'sessions', 'connection'];
+// `sessions` and `uiWorkspace` are hard dependencies: the browser's whole point
+// is navigating to a session, and the navigation face is what clears the panel.
+const inject = ['slots', 'locale', 'workspaces', 'sessions', 'uiWorkspace', 'connection'];
 
 /**
  * Bind the panel to the seats the slot machinery provides.
@@ -960,10 +978,34 @@ function LoomSidebar({
     t,
   });
 
-  const sectionHead = (label, action) => h('div', { className: 'loom-section-head' },
-    h('span', null, label),
-    action ?? null,
-  );
+  // A section is collapsible in its own right, so a user who only wants the
+// workspace list can put the other two away.
+  const [hiddenSections, setHiddenSections] = React.useState(() => new Set());
+  const toggleSection = toggle(setHiddenSections);
+
+  const sectionHead = (id, label, count, action) => {
+    const open = !hiddenSections.has(id);
+    return h('div', { className: 'loom-section-head' },
+      h('button', {
+        type: 'button',
+        className: 'loom-section-title',
+        'aria-expanded': open,
+        title: label,
+        onClick: () => toggleSection(id),
+      },
+        h('span', {
+          className: open ? 'loom-twisty' : 'loom-twisty loom-twisty-collapsed',
+          style: { width: 16, height: 16 },
+        }, h(IconChevronDownOutline14, { size: 12 })),
+        h('span', null, label),
+        count > 0 && h('span', { className: 'loom-section-count' }, String(count)),
+      ),
+      action ?? null,
+    );
+  };
+
+  /** A section's body, or nothing when the section is collapsed. */
+  const sectionBody = (id, render) => (hiddenSections.has(id) ? null : render());
 
   return h('div', { className: 'loom-sidebar' },
     h('div', { className: 'loom-search' },
@@ -978,14 +1020,14 @@ function LoomSidebar({
 
     nothing && h('div', { className: 'loom-sidebar-empty' }, t('noMatches')),
 
-    sectionHead(t('sectionProjects'),
+    sectionHead('projects', t('sectionProjects'), projectRows.length,
       h('button', {
         type: 'button', className: 'loom-icon-btn',
         title: t('newProject'), 'aria-label': t('newProject'), onClick: onNewProject,
       }, h(IconPlusOutline16, { size: 16 }))),
 
-    projectRows.length === 0
-      ? h('div', { className: 'loom-sidebar-empty' }, t('noProjects'))
+    sectionBody('projects', () => (projectRows.length === 0
+      ? h('div', { className: 'loom-empty-section' }, t('noProjects'))
       : projectRows.map(row => h(LoomGroup, {
           key: row.key,
           row,
@@ -1010,23 +1052,23 @@ function LoomSidebar({
               onClick: () => onDeleteProject(row.project),
             }, h(IconTrashOutline16, { size: 16 })),
           ],
-        })),
+        })))),
 
-    sectionHead(t('sectionWorkspaces')),
-    workspaceRows.length === 0
-      ? h('div', { className: 'loom-sidebar-empty' }, t('noWorkspaces'))
-      : workspaceRows.map(group),
+    sectionHead('workspaces', t('sectionWorkspaces'), workspaceRows.length),
+    sectionBody('workspaces', () => (workspaceRows.length === 0
+      ? h('div', { className: 'loom-empty-section' }, t('noWorkspaces'))
+      : workspaceRows.map(group))),
 
-    sectionHead(t('sectionChats')),
-    chatSessions.length === 0
-      ? h('div', { className: 'loom-sidebar-empty' }, t('noChats'))
+    sectionHead('chats', t('sectionChats'), chatSessions.length),
+    sectionBody('chats', () => (chatSessions.length === 0
+      ? h('div', { className: 'loom-empty-section' }, t('noChats'))
       : chatSessions.map(summary => h(SessionRow, {
           key: summary.id,
           summary,
           current: summary.id === sessionState?.current,
           onClick: () => onOpenSession(summary.id),
           t,
-        })),
+        })))),
   );
 }
 
@@ -1077,7 +1119,19 @@ function LoomSidebarHost({ bridge, ctx }) {
         snapshot,
         sessionState,
         t,
-        onOpenSession: sessionId => ctx.sessions?.open(sessionId),
+        // Open through the navigation face, NOT `ctx.sessions.open` directly.
+        //
+        // `uiWorkspace.openSession` is what also clears the selected main panel
+        // (`layout.selectPanel(null)`), so choosing a session brings the centre
+        // column back to the Conversation. Calling the sessions service alone
+        // sets the current session but leaves whatever panel was selected in
+        // place — which strands the user on the Loom panel with no way back.
+        onOpenSession: sessionId => {
+          const navigation = ctx.get('uiWorkspace');
+          if (navigation !== undefined) navigation.openSession(sessionId);
+        },
+        // `startSession` additionally inherits the current session's workspace
+        // before the recent-workspace fallback, so it is the right verb here too.
         onStartSession: workspaceId => {
           const navigation = ctx.get('uiWorkspace');
           if (navigation !== undefined && workspaceId !== undefined) navigation.startSession(workspaceId);

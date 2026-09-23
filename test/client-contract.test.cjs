@@ -74,6 +74,22 @@ test('a missing seat renders nothing instead of throwing', () => {
   assert.match(code, /typeof useWorkspaces !== 'function'/, 'must guard the seat before using it');
 });
 
+test('opens sessions through the navigation face, not the sessions service', () => {
+  // `uiWorkspace.openSession` also calls `layout.selectPanel(null)`, which is
+  // what returns the centre column to the Conversation. Calling
+  // `ctx.sessions.open` directly sets the current session but leaves the
+  // selected panel in place, stranding the user on the Loom panel with no way
+  // back — which is exactly how it failed.
+  assert.doesNotMatch(code, /ctx\.sessions\?\.open\s*\(/,
+    'the sessions service alone does not clear the selected panel');
+  assert.match(code, /navigation\.openSession\s*\(/, 'open through the navigation face');
+  assert.match(code, /navigation\.startSession\s*\(/, 'and start new chats through it too');
+});
+
+test('declares uiWorkspace so navigation cannot silently no-op', () => {
+  assert.match(code, /'uiWorkspace'/, 'navigation is essential, so it belongs in inject');
+});
+
 test('claims sidebar.workspaces so the three sections include the native grouping', () => {
   // This seat IS the browsing region, and claiming it shadows the shipped
   // browser. That is correct HERE, unlike an earlier attempt that replaced the
