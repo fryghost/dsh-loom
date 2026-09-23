@@ -1,0 +1,84 @@
+name: 问题报告
+description: 报告一个能复现的问题。必填项请如实填写，不确定的地方写"不确定"。
+title: "[Bug] "
+body:
+  - type: markdown
+    attributes:
+      value: |
+        填写前请先确认：插件确实已挂载（`$DSH_HOME/profiles/<profile>/package.json` 的 `dsh.profile.bundles` 里有 `"dsh-loom"`），并且装完之后**完整重启过**对应 profile。
+
+        下面的客户端日志是排查这类问题最主要的一项。原因是这个失败模式不留别的痕迹：客户端注册槽位时回调抛错，`slots.inject` 会静默退役这条注册——停掉它的 controller、异步重抛，用户和模型都看不到任何东西。所以客户端会主动把注册结果上报给 Host，Host 追加写进 `$DSH_HOME/loom-client.log`。
+
+  - type: textarea
+    id: happened
+    attributes:
+      label: 发生了什么
+      description: 实际观察到的行为。涉及具体文件夹、技能或项目时，把预检里显示的内容原文贴上，别概括。
+      placeholder: |
+        例：项目「装修」有 3 个文件夹，预检里只列出 2 个的技能——ws-c 被写成了"未贡献"，但那个文件夹里确实有 .dsh/skills/foo/SKILL.md。
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期望发生什么
+      description: 你认为正确的结果，以及为什么。如果和 README 或 docs/design.md 里的某条描述冲突，把那段引出来。
+      placeholder: |
+        例：期望 ws-c 出现在技能来源里，因为它有 .dsh/skills/foo/SKILL.md。
+    validations:
+      required: true
+
+  - type: textarea
+    id: client-log
+    attributes:
+      label: $DSH_HOME/loom-client.log 的内容
+      description: |
+        打开这个文件并贴出全部内容，一行都别省。路径：Windows 是 `%USERPROFILE%\.dsh\loom-client.log`；macOS / Linux 是 `~/.dsh/loom-client.log`（若设了 `DSH_HOME` 则以它为准）。
+
+        文件不存在、或者存在但为空，就直接写"文件不存在"或"空"——这两种答案同样有用：面板没出现而日志为空，说明问题出在更早的地方（插件没挂载、profile 没重启、`dsh.profile.bundles` 里没有它），这是排查的第一个分叉。
+      placeholder: |
+        文件不存在
+        —— 或者 ——
+        {"at":"2025-01-01T00:00:00.000Z","event":"register","slot":"sidebar.workspaces","ok":false,"message":"...","stack":"..."}
+    validations:
+      required: true
+
+  - type: input
+    id: dsh-version
+    attributes:
+      label: DSH 版本
+      description: 用 `dsh --version` 获取。也请说明是 Web UI 还是 Desktop 应用。
+      placeholder: 例如 0.1.0
+    validations:
+      required: true
+
+  - type: input
+    id: plugin-version
+    attributes:
+      label: 插件版本
+      description: 见本仓库 `package.json` 的 `version`。如果你装的是自己改过的检出，写"本地检出"并说明改了哪里。
+      placeholder: 0.1.0
+    validations:
+      required: true
+
+  - type: dropdown
+    id: profile
+    attributes:
+      label: 装在了哪个 profile
+      description: DSH 的插件按 profile 安装，Desktop 和 Web 是相互独立的两个。装错 profile 是"什么都没发生"的常见原因。
+      options:
+        - web
+        - desktop
+        - 其他
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: 操作系统
+      description: 写出具体版本。路径大小写、分隔符和软链接行为的差异经常只在某一个平台上出现。
+      placeholder: 例如 Windows 11 23H2 / macOS 15.2 / Ubuntu 24.04
+    validations:
+      required: true
