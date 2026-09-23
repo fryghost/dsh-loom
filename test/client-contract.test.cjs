@@ -128,22 +128,35 @@ test('the sidebar label follows the active locale without re-registering', () =>
  */
 test('the injected stylesheet survives its own template literal', () => {
   // The whole CSS block is ONE backtick-delimited template literal, so a stray
-  // backtick inside a comment ends it early. The last rule is the sentinel: a
-  // truncated capture would stop before reaching it.
-  const styles = /const STYLES = `([\s\S]*?)`;/.exec(source);
-  assert.ok(styles !== null, 'STYLES must be a backtick-delimited template');
-  assert.match(styles[1], /\.loom-warn-note/,
-    'the stylesheet must run to its final rule — a stray backtick would cut it short');
+  // backtick inside a comment ends it early and the file stops parsing. That
+  // mistake shipped FOUR times.
+  //
+  // This must be checked the way the JS engine reads it: the literal ends at the
+  // FIRST following backtick, whatever the author intended. An earlier version
+  // of this test looked for a backtick followed by a semicolon, which silently
+  // skipped every stray one — it could not fail for the bug it was written for.
+  const opener = 'const STYLES = `';
+  const start = source.indexOf(opener);
+  assert.ok(start >= 0, 'STYLES must be a backtick-delimited template');
+  const rest = source.slice(start + opener.length);
+  const end = rest.indexOf('`');
+  assert.equal(rest[end + 1], ';',
+    'the first backtick after the opening one must close the literal — anything else is a stray backtick inside the stylesheet');
 });
 
 test('bordered boxes count their border inside their width', () => {
-  // width: 100% on a box that has padding and a border, without border-box,
-  // overflows its container. The Input atom's wrapper is exactly that box, so
-  // this is what made the search field bleed past the sidebar's padding and the
-  // project-name field overhang the folder list beneath it.
+  // width: 100% on a box that has padding or a border, without border-box,
+  // overflows its container. That single omission produced three separate
+  // visible bugs before it was found — the search field, the project-name
+  // field, and every session row (which pushed the timestamps off the right
+  // edge and gave the sidebar a horizontal scrollbar).
+  //
+  // The fix is a SCOPED RESET rather than per-element rules, because patching
+  // one element at a time is what let it come back. This asserts the reset
+  // exists and covers every descendant of the sidebar.
   const styles = /const STYLES = `([\s\S]*?)`;/.exec(source);
-  assert.match(styles[1], /\.loom-input[\s\S]{0,80}box-sizing:\s*border-box/,
-    'the full-width input wrapper must use border-box');
+  assert.match(styles[1], /\.loom-sidebar,\s*\n\.loom-sidebar \*\s*\{\s*box-sizing:\s*border-box/,
+    'the sidebar must reset box-sizing for itself and every descendant');
 });
 
 /*

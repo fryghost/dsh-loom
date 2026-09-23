@@ -218,6 +218,20 @@ const STYLES = `
 
 /* No card chrome of its own any more: the preflight is a dialog now, and the
    Modal atom already supplies the surface and the padding. */
+/* Scoped reset: every box this panel lays out counts its own padding and
+   border inside its width.
+   Without it, width: 100% resolves against the CONTENT box, so any element that
+   also has padding comes out wider than its container. That one omission
+   produced three separate visible bugs, all reported before it was found:
+     - the search field bled past the sidebar's padding;
+     - the project-name field overhung the folder list beneath it;
+     - every session row was 12px too wide, pushing the timestamps off the
+       right edge and giving the whole column a horizontal scrollbar.
+   Fixing it per-element is what let it come back each time.
+   (Never write a backtick in this block — it is itself a template literal.) */
+.loom-sidebar,
+.loom-sidebar * { box-sizing: border-box; }
+
 .loom-preflight { display: flex; flex-direction: column; gap: 16px; }
 .loom-preflight-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .loom-boundary { color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 22px; }
