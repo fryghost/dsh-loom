@@ -410,6 +410,14 @@ const STYLES = `
   border-left: 1px solid var(--dsw-alias-border-l2);
 }
 
+/* The 聊天 section has no group level, so its sessions hang directly off the
+   SECTION and indent to that section's twisty centre (14px) rather than a
+   group's (18px).
+   Without this they rendered at the section's own level, the same depth as a
+   group header — reading as siblings of 聊天 rather than as its contents, and
+   making this the one place in the panel where a session sat at depth 0. */
+.loom-children-section { margin-left: 10px; }
+
 .loom-row {
   display: flex; align-items: center; gap: 0;
   width: 100%; height: 32px; padding: 0 6px;
@@ -1134,16 +1142,19 @@ function LoomSidebar({
     sectionHead('chats', t('sectionChats'), chatSessions.length),
     sectionBody('chats', () => (chatSessions.length === 0
       ? h('div', { className: 'loom-empty-section' }, t('noChats'))
-      : chatSessions.map(summary => h(SessionRow, {
-          key: summary.id,
-          summary,
-          current: summary.id === sessionState?.current,
-          onClick: () => onOpenSession(summary.id),
-          onRename: onRenameSession,
-          onFork: onForkSession,
-          onArchive: onArchiveSession,
-          t,
-        })))),
+      // Same container a group uses for its sessions, so a chat is drawn as a
+      // CHILD of its section rather than as a sibling of the section header.
+      : h('div', { className: 'loom-children loom-children-section' },
+          chatSessions.map(summary => h(SessionRow, {
+            key: summary.id,
+            summary,
+            current: summary.id === sessionState?.current,
+            onClick: () => onOpenSession(summary.id),
+            onRename: onRenameSession,
+            onFork: onForkSession,
+            onArchive: onArchiveSession,
+            t,
+          }))))),
   );
 }
 
