@@ -174,7 +174,22 @@ Loom takes over the sidebar's browse area and splits it into three sections. **A
 |---|---|
 | **Projects** | Sessions under a project's member folders (deduplicated when several members match the same session) |
 | **Workspaces** | Sessions of workspaces not claimed by any project |
-| **Chats** | Sessions with no attribution to any workspace (new, forked, unreachable) |
+| **Chats** | Sessions whose cwd matches no *registered* workspace |
+
+### Why "Chats" is not an empty section
+
+A session always has a cwd, but **belonging to a workspace is a live fact, not a stored guarantee**. DSH defines membership as:
+
+> The record's ordered `sessionIds` is the ownership truth; `sessionIds` filters on read — `sessionIds.filter(id => sessionPath(id) === record.path)`
+
+(`packages/workspace/workspace/src/entity.ts:101-102`; that package's README calls it "membership is ownership plus a live cwd fact".)
+
+So attribution holds only while **a registered workspace exists whose path equals that session's cwd**. When that stops being true, no workspace claims the session:
+
+- **The workspace registration was deleted** — DSH's `delete` explicitly removes the registration only and **does not delete session logs**, leaving those sessions unowned;
+- **The cwd no longer matches any registered path** — for instance the folder was moved or renamed.
+
+Such sessions cannot enter Projects (whose members are all workspaces) or Workspaces, so they land in Chats. **It is the destination for "unowned", not for "temporary".**
 
 Archived sessions appear in none of the three sections; **subagent sessions are not sessions here** — they hang under the parent session's header directory and are not part of this list.
 
