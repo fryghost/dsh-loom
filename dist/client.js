@@ -399,18 +399,24 @@ var STYLES = `
 .loom-sidebar {
   display: flex; flex-direction: column;
   height: 100%; overflow-y: auto;
-  padding: 8px;
+  padding: 6px 6px 16px;
   color: var(--dsw-alias-label-primary);
   font-size: 14px; line-height: 20px;
 }
 .loom-search { padding: 0 0 8px; }
 
-.loom-section-head { display: flex; align-items: center; gap: 2px; margin-top: 12px; padding: 0 4px; }
+/* The three rulers of this tree, all measured from the sidebar's own edge:
+     the section twisty   sits at 6 + 2             =  8px
+     the group slot       starts at 6 + 6           = 12px, centred on 20px
+     the children's guide is placed AT that centre  = 20px
+   Every extra padding between those points was dead space on the left, which
+   is what made the collapsed tree look indented for no reason. */
+.loom-section-head { display: flex; align-items: center; gap: 2px; margin-top: 12px; padding: 0; }
 .loom-section-head:first-of-type { margin-top: 4px; }
 .loom-section-title {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 4px;
-  height: 28px; padding: 0 4px;
+  height: 28px; padding: 0 2px;
   border: none; border-radius: 6px;
   background: transparent; color: var(--dsw-alias-label-secondary);
   cursor: pointer; text-align: left;
@@ -422,7 +428,7 @@ var STYLES = `
 .loom-group { display: flex; flex-direction: column; }
 .loom-group-head {
   display: flex; align-items: center; gap: 6px;
-  height: 34px; padding: 0 8px;
+  height: 34px; padding: 0 6px;
   border-radius: 8px; cursor: pointer; user-select: none;
 }
 .loom-group-head:hover { background: var(--dsw-alias-interactive-bg-hover); }
@@ -446,13 +452,13 @@ var STYLES = `
    joined to it by a hairline, so membership is visible rather than implied. */
 .loom-children {
   display: flex; flex-direction: column;
-  margin-left: 15px; padding-left: 7px;
+  margin-left: 14px; padding-left: 7px;
   border-left: 1px solid var(--dsw-alias-border-l2);
 }
 
 .loom-row {
   display: flex; align-items: center; gap: 0;
-  width: 100%; height: 32px; padding: 0 8px;
+  width: 100%; height: 32px; padding: 0 6px;
   border: none; border-radius: 8px;
   background: transparent; color: var(--dsw-alias-label-primary);
   cursor: pointer; text-align: left; user-select: none;
