@@ -20,16 +20,37 @@
  */
 
 /**
+ * Whether a session belongs in a browsing list at all.
+ *
+ * Mirrors DSH's own rule (`ui-workspace/src/client/tree.ts`, `sessionVisible`)
+ * rather than inventing one, because a second opinion here would disagree with
+ * the shipped browser about what a session list contains:
+ *
+ *   - **Subagent children are not sessions in this list.** They are reachable
+ *     through their parent's header catalog, so listing them beside real chats
+ *     both mislabels them and floods the section that catches leftovers.
+ *   - Archived sessions are visible nowhere.
+ *   - A blank session is the provisional "New Session" row, so only the current
+ *     one shows; the rest are placeholders, not history.
+ */
+function sessionVisible(summary, current, archived) {
+  return summary.origin !== 'subagent'
+    && !archived.has(summary.id)
+    && (!summary.blank || summary.id === current);
+}
+
+/**
  * @param input.projects - the Loom manifest's projects.
  * @param input.snapshot - `WorkspaceSnapshot`: `{ items, archivedSessionIds }`,
  *   where each item is `{ workspaceId, path, title, sessionIds }`.
  * @param input.sessionState - `SessionListState`: `{ ids, byId, current }`,
- *   where each entry is `{ id, displayTitle, running, updatedAt }`.
+ *   where each entry is `{ id, displayTitle, running, blank, origin, updatedAt }`.
  * @returns `{ projectRows, workspaceRows, chatSessions }`.
  */
 function deriveSections({ projects, snapshot, sessionState } = {}) {
   const byId = (sessionState && sessionState.byId) || {};
   const archived = new Set((snapshot && snapshot.archivedSessionIds) || []);
+  const current = sessionState && sessionState.current;
   const workspaces = (snapshot && snapshot.items) || [];
   const workspaceById = new Map(workspaces.map(workspace => [workspace.workspaceId, workspace]));
 
@@ -44,10 +65,18 @@ function deriveSections({ projects, snapshot, sessionState } = {}) {
    * Deduped because two members of one project may legitimately list the same
    * session, and a project must show it once.
    */
-  const collect = ids => [...new Set(ids)]
-    .map(id => byId[id])
-    .filter(summary => summary !== undefined && !archived.has(summary.id))
-    .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
+  const collect = ids => {
+    const visible = [...new Set(ids)]
+      .map(id => byId[id])
+      .filter(summary => summary !== undefined && sessionVisible(summary, current, archived))
+      .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
+    // The provisional New Session row sits at the top of its group, mirroring
+    // `pinCurrentBlank` in the shipped browser: it is where the next message
+    // goes, not where the newest history is.
+    const blankAt = visible.findIndex(summary => summary.blank === true);
+    if (blankAt > 0) visible.unshift(...visible.splice(blankAt, 1));
+    return visible;
+  };
 
   const projectRows = (projects || []).map(project => ({
     key: project.id,
@@ -86,4 +115,4 @@ function deriveSections({ projects, snapshot, sessionState } = {}) {
   return { projectRows, workspaceRows, chatSessions };
 }
 
-module.exports = { deriveSections };
+module.exports = { deriveSections, sessionVisible };

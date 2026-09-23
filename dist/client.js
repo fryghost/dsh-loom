@@ -7,16 +7,25 @@ var __commonJS = (cb, mod) => function __require() {
 // src/core/sections.cjs
 var require_sections = __commonJS({
   "src/core/sections.cjs"(exports2, module2) {
+    function sessionVisible(summary, current, archived) {
+      return summary.origin !== "subagent" && !archived.has(summary.id) && (!summary.blank || summary.id === current);
+    }
     function deriveSections2({ projects, snapshot, sessionState } = {}) {
       const byId = sessionState && sessionState.byId || {};
       const archived = new Set(snapshot && snapshot.archivedSessionIds || []);
+      const current = sessionState && sessionState.current;
       const workspaces = snapshot && snapshot.items || [];
       const workspaceById = new Map(workspaces.map((workspace) => [workspace.workspaceId, workspace]));
       const claimedWorkspaceIds = /* @__PURE__ */ new Set();
       for (const project of projects || []) {
         for (const member of project.members || []) claimedWorkspaceIds.add(member.workspaceId);
       }
-      const collect = (ids) => [...new Set(ids)].map((id) => byId[id]).filter((summary) => summary !== void 0 && !archived.has(summary.id)).sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
+      const collect = (ids) => {
+        const visible = [...new Set(ids)].map((id) => byId[id]).filter((summary) => summary !== void 0 && sessionVisible(summary, current, archived)).sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
+        const blankAt = visible.findIndex((summary) => summary.blank === true);
+        if (blankAt > 0) visible.unshift(...visible.splice(blankAt, 1));
+        return visible;
+      };
       const projectRows = (projects || []).map((project) => ({
         key: project.id,
         project,
@@ -42,7 +51,7 @@ var require_sections = __commonJS({
       const chatSessions = collect(sessionState && sessionState.ids || []).filter((summary) => !attributed.has(summary.id));
       return { projectRows, workspaceRows, chatSessions };
     }
-    module2.exports = { deriveSections: deriveSections2 };
+    module2.exports = { deriveSections: deriveSections2, sessionVisible };
   }
 });
 

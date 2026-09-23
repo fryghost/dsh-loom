@@ -13,7 +13,10 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { deriveSections } = require('../src/core/sections.cjs');
 
-const summary = (id, title, updatedAt = 1) => ({ id, displayTitle: title, running: false, updatedAt });
+const summary = (id, title, updatedAt = 1) => ({ id, displayTitle: title, running: false, blank: false, updatedAt });
+/** A subagent child: `origin: 'subagent'` is what marks it. */
+const subagent = (id, title, updatedAt = 1) => ({ ...summary(id, title, updatedAt), origin: 'subagent' });
+const blank = (id, updatedAt = 1) => ({ ...summary(id, '', updatedAt), blank: true });
 const workspace = (workspaceId, title, sessionIds) => ({
   workspaceId, title, path: `/work/${workspaceId}`, sessionIds, createdAt: '', updatedAt: '',
 });
@@ -104,6 +107,46 @@ test('a session shared by two members of one project appears once', () => {
   const { projectRows } = deriveSections({ projects, snapshot, sessionState });
 
   assert.deepEqual(projectRows[0].sessions.map(s => s.id), ['shared']);
+});
+
+test('subagent children never reach any section', () => {
+  // They are reachable through their parent's header catalog. Before this was
+  // mirrored from DSH's own `sessionVisible`, subagent sessions had no workspace
+  // of their own, so every one of them landed in 聊天 and flooded it.
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('a', 'Alpha', ['parent'])],
+    sessions: {
+      parent: summary('parent', 'parent'),
+      child: subagent('child', 'child'),
+      grandchild: subagent('grandchild', 'grandchild'),
+    },
+    ids: ['parent', 'child', 'grandchild'],
+  });
+
+  const { projectRows, workspaceRows, chatSessions } = deriveSections({ projects: [], snapshot, sessionState });
+  const all = [
+    ...projectRows.flatMap(r => r.sessions.map(s => s.id)),
+    ...workspaceRows.flatMap(r => r.sessions.map(s => s.id)),
+    ...chatSessions.map(s => s.id),
+  ];
+
+  assert.deepEqual(all, ['parent'], 'only the parent session is a session in this list');
+});
+
+test('only the current blank session is shown; other blanks are placeholders', () => {
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('a', 'Alpha', ['real', 'blankCurrent', 'blankOther'])],
+    sessions: {
+      real: summary('real', 'real'),
+      blankCurrent: blank('blankCurrent'),
+      blankOther: blank('blankOther'),
+    },
+  });
+  sessionState.current = 'blankCurrent';
+
+  const { workspaceRows } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(workspaceRows[0].sessions.map(s => s.id), ['blankCurrent', 'real']);
 });
 
 test('archived sessions are hidden from every section', () => {
