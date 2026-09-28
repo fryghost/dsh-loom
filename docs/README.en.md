@@ -201,7 +201,15 @@ The comparison is **exact equality**, matching DSH's own attach rule (`header.cw
 
 Such sessions cannot enter Projects (whose members are all workspaces) or Workspaces, so they land in Chats. **It is the destination for "unowned", not for "temporary".**
 
-Archived sessions appear in none of the three sections; **subagent sessions are not sessions here** — they hang under the parent session's header directory and are not part of this list.
+**What is not shown:**
+
+- **Archived sessions** — in none of the three sections;
+- **Subagent sessions** — they hang under the parent session's header directory and are not part of this list;
+- **Shell sessions** — created but never prompted. They have no durable title, so the display name falls back to **the basename of their cwd**, making them look like a conversation called `dsh-project`. Measured across all 327 stored sessions on this machine, "has a title" and "has a user message" agree with **no exceptions** (96 with, 20 without), so a missing title is a reliable discriminator.
+
+  That discriminator has one guard: **the title comes from an asynchronously loaded projection**, so before it arrives EVERY session is untitled. A session therefore counts as a shell only once its projection state is `ready` — **while loading, everything is shown**. A shell lingering for a moment is a far smaller failure than a sidebar that blanks itself on load.
+
+  (DSH's `blank` bit is not sufficient: these shells are already `blank: false` in the store. That bit is cleared by running state and host metadata, not only by a first message.)
 
 **The same session may appear once under each of several projects, and that is deliberate.** If a folder belongs to two projects at once, its sessions are listed under both — because that folder really does belong to both. Deduplication happens only **between the members of one project** (when two members match the same session, it is listed once).
 

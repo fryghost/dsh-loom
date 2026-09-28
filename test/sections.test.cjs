@@ -17,7 +17,18 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { currentSessionId, deriveSections } = require('../src/core/sections.cjs');
 
-const summary = (id, title, updatedAt = 1) => ({ id, displayTitle: title, running: false, blank: false, updatedAt });
+/**
+ * A session row.
+ *
+ * Carries `title` (the DURABLE title) because production does: the store's
+ * `title` is absent until the host projects one, and `sessionVisible` reads it to
+ * tell a conversation from a shell. A fixture that set only `displayTitle` would
+ * be describing a row production cannot produce — every such row would be a
+ * shell and the whole file would assert the wrong thing.
+ */
+const summary = (id, title, updatedAt = 1) => ({
+  id, title, displayTitle: title, running: false, blank: false, updatedAt,
+});
 /** A subagent child: `origin: 'subagent'` is what marks it. */
 const subagent = (id, title, updatedAt = 1) => ({ ...summary(id, title, updatedAt), origin: 'subagent' });
 const blank = (id, updatedAt = 1) => ({ ...summary(id, '', updatedAt), blank: true });
@@ -25,6 +36,10 @@ const blank = (id, updatedAt = 1) => ({ ...summary(id, '', updatedAt), blank: tr
 const selected = (id, updatedAt = 1) => ({ ...blank(id, updatedAt), retainedBy: { mainView: 1 } });
 /** A session that lives at a path, which is what attribution now reads too. */
 const at = (id, cwd, title = id, updatedAt = 1) => ({ ...summary(id, title, updatedAt), cwd });
+/** A shell: created, never prompted, so the host never projected a title. */
+const shell = (id, cwd, updatedAt = 1) => ({
+  id, displayTitle: 'placeholder', running: false, blank: false, updatedAt, cwd,
+});
 const workspace = (workspaceId, title, sessionIds, path) => ({
   workspaceId, title, path: path ?? `/work/${workspaceId}`, sessionIds, createdAt: '', updatedAt: '',
 });
@@ -37,14 +52,23 @@ const workspace = (workspaceId, title, sessionIds, path) => ({
  * earlier version of this helper wrote one anyway, which is how the
  * `sessionState.current` bug stayed green while every blank Session (including
  * the provisional New Session row) was being filtered out in production.
+ *
+ * `projectionsBySession` defaults to 'ready' for every id, because that is the
+ * settled state a browser is in once loaded. A test that cares about the LOADING
+ * window passes `projections` explicitly to override one session — the shell rule
+ * must not fire while projections are still in flight.
  */
-function stores({ workspaces, sessions, archived = [], ids }) {
+function stores({ workspaces, sessions, archived = [], ids, projections }) {
+  const sessionIds = ids ?? Object.keys(sessions);
   return {
     snapshot: { items: workspaces, archivedSessionIds: archived, state: 'idle', phase: 'ready', error: null },
     sessionState: {
-      ids: ids ?? Object.keys(sessions),
+      ids: sessionIds,
       byId: sessions,
       phase: 'ready',
+      projectionsBySession: projections ?? Object.fromEntries(
+        sessionIds.map(id => [id, { values: {}, state: 'ready', error: null }]),
+      ),
     },
   };
 }
@@ -213,6 +237,109 @@ test('a session with no cwd stays unattributed rather than matching anything', (
 
   assert.deepEqual(idsOf(workspaceRows), []);
   assert.deepEqual(chatSessions.map(s => s.id), ['loose']);
+});
+
+test('a shell session is not listed anywhere', () => {
+  // The bug this pins: a session created in a directory but never prompted has
+  // NO durable title, so the host's display-title fallback names the row after
+  // the BASENAME OF ITS CWD (`service.ts` displayTitleOf). The list therefore
+  // accumulates rows literally called `dsh-project` that look like
+  // conversations. Measured across every stored session on this machine:
+  //
+  //   title event AND user message : 96
+  //   title event, no user message :  0
+  //   no title event, user message :  0
+  //   neither                      : 20
+  //
+  // Zero exceptions, so `title === undefined` is a reliable stand-in — and it
+  // has to be a stand-in, because the client snapshot carries no log.
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', [], '/work/w')],
+    sessions: { shell: shell('shell', '/work/w'), real: at('real', '/work/w', 'real') },
+    ids: ['shell', 'real'],
+  });
+
+  const { workspaceRows, chatSessions } = deriveSections({ projects: [], snapshot, sessionState });
+  const all = [...idsOf(workspaceRows), ...chatSessions.map(s => s.id)];
+
+  assert.deepEqual(all, ['real'], 'only a session with a conversation is listed');
+});
+
+test('an untitled session is NOT hidden while its projections are loading', () => {
+  // `title` lives in the projection store and arrives asynchronously, so before
+  // it lands EVERY session is untitled. Treating that as a shell would blank the
+  // entire sidebar on load — a far worse failure than a shell lingering a moment.
+  // Only state 'ready' settles the question; anything else is shown.
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', [], '/work/w')],
+    sessions: { pending: shell('pending', '/work/w') },
+    ids: ['pending'],
+    projections: { pending: { values: {}, state: 'loading', error: null } },
+  });
+
+  const { workspaceRows } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(idsOf(workspaceRows), ['pending'],
+    'an unresolved projection means UNKNOWN, and unknown is shown');
+});
+
+test('an absent projectionsBySession entry also leaves the row visible', () => {
+  // A store that has not reported projections at all must not be read as
+  // "everything is a shell".
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', [], '/work/w')],
+    sessions: { pending: shell('pending', '/work/w') },
+    ids: ['pending'],
+    projections: {},
+  });
+
+  const { workspaceRows } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(idsOf(workspaceRows), ['pending']);
+});
+
+test('a RUNNING untitled session stays visible', () => {
+  // A conversation that just started has no durable title until its first turn
+  // completes. Hiding it would make an active conversation vanish mid-turn.
+  const running = { ...shell('busy', '/work/w'), running: true };
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', [], '/work/w')],
+    sessions: { busy: running },
+    ids: ['busy'],
+  });
+
+  const { workspaceRows } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(idsOf(workspaceRows), ['busy'], 'an in-flight conversation is never hidden');
+});
+
+test('the CURRENT untitled session stays visible', () => {
+  // The provisional New Session row is untitled by definition and the user is
+  // looking at it.
+  const currentShell = { ...shell('new', '/work/w'), retainedBy: { mainView: 1 } };
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', [], '/work/w')],
+    sessions: { new: currentShell },
+    ids: ['new'],
+  });
+
+  const { workspaceRows } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(idsOf(workspaceRows), ['new'], 'the New Session row is kept');
+});
+
+test('an empty-string title is treated as untitled, not as a title', () => {
+  const emptyTitle = { ...shell('blank-ish', '/work/w'), title: '' };
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', [], '/work/w')],
+    sessions: { 'blank-ish': emptyTitle },
+    ids: ['blank-ish'],
+  });
+
+  const { workspaceRows, chatSessions } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual([...idsOf(workspaceRows), ...chatSessions.map(s => s.id)], [],
+    'an empty title is not a conversation');
 });
 
 test('subagent children never reach any section', () => {

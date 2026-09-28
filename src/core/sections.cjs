@@ -32,27 +32,72 @@
  *   - Archived sessions are visible nowhere.
  *   - A blank session is the provisional "New Session" row, so only the current
  *     one shows; the rest are placeholders, not history.
+ *   - A session with no durable title never had a conversation, so it is not a
+ *     conversation to list either.
  *
  * A subagent is detected by EITHER signal, not by `origin` alone.
  *
  * `origin` is optional on the wire and is copied straight from the session
  * header (`api/session-controller/src/list.ts`, `listFields`), which only
- * carries it when the writing build put it there. Scanning this machine's 347
+ * carries it when the writing build put it there. Scanning this machine's 327
  * stored sessions found 211 headers with `parentSession` but only 209 with
- * `origin` — the two stragglers carry `parentSession`, `delegationDepth` and
+ * `origin` — the stragglers carry `parentSession`, `delegationDepth` and
  * `isSeeded` instead, i.e. they were delegated by a build that predates the
  * `origin` field. Headers are never backfilled, so those sessions stay
  * `origin`-less forever, and a rule keyed on `origin` alone files them as
- * ordinary chats for good.
+ * ordinary chats for good. A delegated session always has a parent, so
+ * `parentId` is the durable signal and `origin` the fast one.
  *
- * A delegated session always has a parent, so `parentId` is the durable signal
- * and `origin` is the fast one. Either is sufficient; both are cheap.
+ * The title test carries a measured justification. `SessionSummary.title` is the
+ * DURABLE title, absent until the host projects one, and the host writes it once
+ * a conversation starts. Across every stored session on this machine the two
+ * signals agree with no exceptions:
+ *
+ *   title event AND user message : 96
+ *   title event, no user message :  0
+ *   no title event, user message :  0
+ *   neither                      : 20
+ *
+ * So `title === undefined` is a reliable stand-in for "no conversation ever
+ * happened". It has to be a stand-in: the client snapshot carries `title` and
+ * `blank` but never the log, so a rule about content can only key on those.
+ *
+ * Without this, such a session is listed under the BASENAME OF ITS CWD — the
+ * display-title fallback (`service.ts` `displayTitleOf`) — so a directory
+ * accumulates rows literally named `dsh-project` that look like conversations
+ * and are not.
+ *
+ * `blank` alone is not enough, which is why this exists: these sessions are
+ * already `blank: false` in the store. DSH's bit is cleared by running state and
+ * host metadata, not only by a prompt, so it does not reliably mean "has
+ * history" — and the store's contract says filtering belongs to the consumer
+ * (`service.ts`: "Filtering stays with the consumer").
+ *
+ * A missing title only counts as a shell once its projections have ARRIVED.
+ * `title` comes from the per-session projection store, loaded asynchronously
+ * (`manager.ts` `refreshProjections`), so before that lands EVERY session is
+ * untitled — and treating that as a shell would blank the entire sidebar on
+ * load. `projectionsBySession[id].state` distinguishes the two: 'ready' means
+ * the absence is real, anything else means unknown, and unknown is shown.
  */
-function sessionVisible(summary, current, archived) {
+function sessionVisible(summary, current, archived, projectionReady) {
   const delegated = summary.origin === 'subagent'
     || (summary.parentId !== undefined && summary.parentId !== summary.id);
+  // Kept even while untitled:
+  //   - the CURRENT session, because that row is the provisional New Session and
+  //     the user is looking at it;
+  //   - a RUNNING one, because a conversation that just started has no durable
+  //     title until its first turn completes, and hiding a session mid-turn
+  //     would make an active conversation vanish from the list.
+  // Only an untitled session that is neither, AND whose projections have loaded,
+  // is a shell.
+  const shell = projectionReady === true
+    && (summary.title === undefined || summary.title === '')
+    && summary.id !== current
+    && summary.running !== true;
   return !delegated
     && !archived.has(summary.id)
+    && !shell
     && (!summary.blank || summary.id === current);
 }
 
@@ -91,8 +136,9 @@ function currentSessionId(sessionState) {
  * @param input.projects - the Loom manifest's projects.
  * @param input.snapshot - `WorkspaceSnapshot`: `{ items, archivedSessionIds }`,
  *   where each item is `{ workspaceId, path, title, sessionIds }`.
- * @param input.sessionState - `SessionListState`: `{ ids, byId }`, where each
- *   entry is `{ id, displayTitle, running, blank, origin, updatedAt, retainedBy }`.
+ * @param input.sessionState - `SessionListState`: `{ ids, byId, projectionsBySession }`,
+ *   where each `byId` entry is
+ *   `{ id, title, displayTitle, cwd, parentId, running, blank, origin, updatedAt, retainedBy }`.
  * @param input.panelActive - whether a main panel is selected. Plain data, so
  *   this module stays host-free.
  * @returns `{ projectRows, workspaceRows, chatSessions, current, highlighted }`.
@@ -114,6 +160,18 @@ function currentSessionId(sessionState) {
 function deriveSections({ projects, snapshot, sessionState, panelActive = false } = {}) {
   const byId = (sessionState && sessionState.byId) || {};
   const archived = new Set((snapshot && snapshot.archivedSessionIds) || []);
+  const projections = (sessionState && sessionState.projectionsBySession) || {};
+  /**
+   * Whether a session's projections have actually ARRIVED.
+   *
+   * `title` lives in the projection store and is loaded asynchronously, so
+   * "no title" means one of two opposite things: a shell, or a session whose
+   * projections are still in flight. Only 'ready' settles it. Anything else —
+   * including a missing entry — is treated as NOT ready, so the row is shown:
+   * a shell that lingers a moment is a far smaller failure than a sidebar that
+   * blanks itself while loading.
+   */
+  const projectionReady = id => (projections[id] || {}).state === 'ready';
   const current = currentSessionId(sessionState);
   const highlighted = panelActive === true ? undefined : current;
   const workspaces = (snapshot && snapshot.items) || [];
@@ -141,7 +199,7 @@ function deriveSections({ projects, snapshot, sessionState, panelActive = false 
   const collect = ids => {
     const visible = [...new Set(ids)]
       .map(id => byId[id])
-      .filter(summary => summary !== undefined && sessionVisible(summary, current, archived))
+      .filter(summary => summary !== undefined && sessionVisible(summary, current, archived, projectionReady(summary.id)))
       .sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
     // The provisional New Session row sits at the top of its group, mirroring
     // `pinCurrentBlank` in the shipped browser: it is where the next message

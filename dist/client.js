@@ -7,9 +7,10 @@ var __commonJS = (cb, mod) => function __require() {
 // src/core/sections.cjs
 var require_sections = __commonJS({
   "src/core/sections.cjs"(exports2, module2) {
-    function sessionVisible(summary, current, archived) {
+    function sessionVisible(summary, current, archived, projectionReady) {
       const delegated = summary.origin === "subagent" || summary.parentId !== void 0 && summary.parentId !== summary.id;
-      return !delegated && !archived.has(summary.id) && (!summary.blank || summary.id === current);
+      const shell = projectionReady === true && (summary.title === void 0 || summary.title === "") && summary.id !== current && summary.running !== true;
+      return !delegated && !archived.has(summary.id) && !shell && (!summary.blank || summary.id === current);
     }
     function currentSessionId(sessionState) {
       const byId = sessionState && sessionState.byId || {};
@@ -21,6 +22,8 @@ var require_sections = __commonJS({
     function deriveSections2({ projects, snapshot, sessionState, panelActive = false } = {}) {
       const byId = sessionState && sessionState.byId || {};
       const archived = new Set(snapshot && snapshot.archivedSessionIds || []);
+      const projections = sessionState && sessionState.projectionsBySession || {};
+      const projectionReady = (id) => (projections[id] || {}).state === "ready";
       const current = currentSessionId(sessionState);
       const highlighted = panelActive === true ? void 0 : current;
       const workspaces = snapshot && snapshot.items || [];
@@ -35,7 +38,7 @@ var require_sections = __commonJS({
         }
       }
       const collect = (ids) => {
-        const visible = [...new Set(ids)].map((id) => byId[id]).filter((summary) => summary !== void 0 && sessionVisible(summary, current, archived)).sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
+        const visible = [...new Set(ids)].map((id) => byId[id]).filter((summary) => summary !== void 0 && sessionVisible(summary, current, archived, projectionReady(summary.id))).sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
         const blankAt = visible.findIndex((summary) => summary.blank === true);
         if (blankAt > 0) visible.unshift(...visible.splice(blankAt, 1));
         return visible;
