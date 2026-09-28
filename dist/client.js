@@ -8,7 +8,8 @@ var __commonJS = (cb, mod) => function __require() {
 var require_sections = __commonJS({
   "src/core/sections.cjs"(exports2, module2) {
     function sessionVisible(summary, current, archived) {
-      return summary.origin !== "subagent" && !archived.has(summary.id) && (!summary.blank || summary.id === current);
+      const delegated = summary.origin === "subagent" || summary.parentId !== void 0 && summary.parentId !== summary.id;
+      return !delegated && !archived.has(summary.id) && (!summary.blank || summary.id === current);
     }
     function currentSessionId(sessionState) {
       const byId = sessionState && sessionState.byId || {};

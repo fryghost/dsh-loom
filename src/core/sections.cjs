@@ -32,9 +32,26 @@
  *   - Archived sessions are visible nowhere.
  *   - A blank session is the provisional "New Session" row, so only the current
  *     one shows; the rest are placeholders, not history.
+ *
+ * A subagent is detected by EITHER signal, not by `origin` alone.
+ *
+ * `origin` is optional on the wire and is copied straight from the session
+ * header (`api/session-controller/src/list.ts`, `listFields`), which only
+ * carries it when the writing build put it there. Scanning this machine's 347
+ * stored sessions found 211 headers with `parentSession` but only 209 with
+ * `origin` — the two stragglers carry `parentSession`, `delegationDepth` and
+ * `isSeeded` instead, i.e. they were delegated by a build that predates the
+ * `origin` field. Headers are never backfilled, so those sessions stay
+ * `origin`-less forever, and a rule keyed on `origin` alone files them as
+ * ordinary chats for good.
+ *
+ * A delegated session always has a parent, so `parentId` is the durable signal
+ * and `origin` is the fast one. Either is sufficient; both are cheap.
  */
 function sessionVisible(summary, current, archived) {
-  return summary.origin !== 'subagent'
+  const delegated = summary.origin === 'subagent'
+    || (summary.parentId !== undefined && summary.parentId !== summary.id);
+  return !delegated
     && !archived.has(summary.id)
     && (!summary.blank || summary.id === current);
 }

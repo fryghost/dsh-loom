@@ -148,6 +148,44 @@ test('subagent children never reach any section', () => {
   assert.deepEqual(all, ['parent'], 'only the parent session is a session in this list');
 });
 
+test('a delegated session is hidden even when its header has no origin', () => {
+  // The bug this pins: `origin` is optional on the wire and is copied straight
+  // from the session header, which only carries it when the WRITING build put it
+  // there. Scanning this machine's 347 stored sessions found 211 headers with
+  // `parentSession` but only 209 with `origin`; the stragglers carry
+  // `parentSession`, `delegationDepth` and `isSeeded` instead, because they were
+  // delegated by a build that predates the field. Headers are never backfilled,
+  // so an `origin`-only rule files those sessions as ordinary chats forever —
+  // which is exactly how subagents kept reappearing in 聊天.
+  const legacyChild = { ...summary('legacy', 'legacy child'), parentId: 'parent' };
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('a', 'Alpha', ['parent'])],
+    sessions: { parent: summary('parent', 'parent'), legacy: legacyChild },
+    ids: ['parent', 'legacy'],
+  });
+
+  const { projectRows, workspaceRows, chatSessions } = deriveSections({ projects: [], snapshot, sessionState });
+  const all = [...idsOf(projectRows), ...idsOf(workspaceRows), ...chatSessions.map(s => s.id)];
+
+  assert.deepEqual(all, ['parent'],
+    'a session with a parent is delegated, whatever its origin field says');
+});
+
+test('a self-referencing parent is not treated as delegation', () => {
+  // Degenerate but cheap to guard: a row whose parent is itself is a root that
+  // happens to carry a stale id, not a child of anything.
+  const selfParent = { ...summary('self', 'self'), parentId: 'self' };
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('a', 'Alpha', ['self'])],
+    sessions: { self: selfParent },
+    ids: ['self'],
+  });
+
+  const { workspaceRows } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(idsOf(workspaceRows), ['self'], 'a self-parented row is still an ordinary session');
+});
+
 test('the blank row of the session the main view retains is visible', () => {
   // The provisional New Session row. It is `blank`, so `sessionVisible` admits it
   // ONLY when it is the current Session — and the current Session comes from
