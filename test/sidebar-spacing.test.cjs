@@ -61,3 +61,114 @@ test('the search field offers a clear control and Escape', () => {
   assert.match(source, /loom-search-clear/, 'a filled field needs a way to empty it');
   assert.match(source, /key === 'Escape'/, 'Escape must clear the query');
 });
+
+/*
+ * ALIGNMENT, checked as arithmetic rather than by eye.
+ *
+ * The control sat visibly off the tree's axes for several rounds, and the cause
+ * was never the metric anyone would check (height, font size) — it was two
+ * half-pixel/one-box errors that no screenshot of the control alone can show.
+ * So the left edges are computed from the sidebar's own padding and compared.
+ */
+/**
+ * The first declaration block whose selector matches `selector`.
+ *
+ * Anchored on the selector itself rather than on a preceding `}`, because a rule
+ * may be preceded by a COMMENT — which is the case for the very rules this file
+ * checks, since each carries a long rationale above it. Requiring a brace first
+ * silently matched nothing and made three assertions vacuous.
+ */
+function ruleFor(selector) {
+  const escaped = selector.replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/\s+/g, '\\s+');
+  const match = new RegExp(`${escaped}\\s*\\{([^}]*)\\}`).exec(styles);
+  assert.ok(match !== null, `no rule for ${selector}`);
+  return match[1];
+}
+/** One `property: <n>px` value from a declaration block. */
+function px(block, property) {
+  const match = new RegExp(`(?:^|;)\\s*${property}:\\s*(-?[\\d.]+)px`).exec(block);
+  assert.ok(match !== null, `${property} is not a px value in: ${block.trim()}`);
+  return Number(match[1]);
+}
+/**
+ * The four sides of a `padding` shorthand, expanded the way CSS expands it.
+ *
+ * 1 value  -> all four
+ * 2 values -> [vertical, horizontal]
+ * 3 values -> [top, horizontal, bottom]
+ * 4 values -> [top, right, bottom, left]
+ *
+ * An earlier version collapsed anything that was not 4 values into four copies
+ * of the first, which silently read `0 6px` as `0` and `6px 4px 16px` as `6`.
+ * The alignment assertions then compared the wrong edges — they failed, but for
+ * a reason in the test rather than in the stylesheet.
+ */
+function padding(block) {
+  const match = /(?:^|;)\s*padding:\s*([^;]+)/.exec(block);
+  assert.ok(match !== null, 'no padding declared');
+  const v = match[1].trim().split(/\s+/).map(value => Number(value.replace('px', '')));
+  if (v.length === 1) return [v[0], v[0], v[0], v[0]];
+  if (v.length === 2) return [v[0], v[1], v[0], v[1]];
+  if (v.length === 3) return [v[0], v[1], v[2], v[1]];
+  return v;
+}
+
+test('the search control sits on the tree\'s leading-slot axis', () => {
+  const sidebar = padding(ruleFor('.loom-sidebar'));
+  const search = ruleFor('.loom-search');
+  const searchPadding = padding(search);
+  const icon = ruleFor('.loom-search-icon');
+
+  // Left edge of the sidebar's content box.
+  const origin = sidebar[3];
+  // The icon SLOT must start where a tree row's 16px slot starts: the sidebar's
+  // padding plus the row's own horizontal padding.
+  const groupHead = ruleFor('.loom-group-head');
+  const groupPadding = padding(groupHead);
+  const slotStart = origin + groupPadding[3];
+  const searchSlotStart = origin + searchPadding[3];
+
+  assert.equal(searchSlotStart, slotStart,
+    'the search icon slot must begin on the same axis as every row slot below it');
+  assert.equal(px(icon, 'width'), 16,
+    'the leading slot is 16px, matching the tree; the shipped control 28px box belongs to its icon-only button');
+});
+
+test('the search text sits on the tree\'s text axis', () => {
+  const sidebar = padding(ruleFor('.loom-sidebar'));
+  const search = ruleFor('.loom-search');
+  const searchPadding = padding(search);
+  const icon = ruleFor('.loom-search-icon');
+  const origin = sidebar[3];
+
+  // Search text = origin + padding-left + icon slot + flex gap.
+  const searchGap = px(search, 'gap');
+  const searchText = origin + searchPadding[3] + px(icon, 'width') + searchGap;
+
+  // Group name text = origin + group padding + slot + group gap.
+  const groupHead = ruleFor('.loom-group-head');
+  const groupPadding = padding(groupHead);
+  const groupText = origin + groupPadding[3] + 16 + px(groupHead, 'gap');
+
+  assert.equal(searchText, groupText,
+    'the search text must begin where group names begin, or the control reads as misaligned');
+});
+
+test('the search hairline does not enter the layout', () => {
+  // A transparent BORDER keeps layout stable across hover but still offsets the
+  // content inside it by half a pixel, which is what put this control on a
+  // different axis from the tree. An outline with a negative offset draws the
+  // same hairline outside the flow.
+  const rule = ruleFor('.loom-search');
+  assert.doesNotMatch(rule, /(?:^|;)\s*border:\s*0?\.?5px/,
+    'a hairline border shifts every position inside the control');
+  assert.match(rule, /outline:\s*0?\.?5px\s*solid\s*transparent/,
+    'the resting hairline must be an outline');
+  assert.match(rule, /outline-offset:\s*-0?\.?5px/,
+    'and drawn inside the box');
+});
+
+test('the search hairline still appears on hover and focus', () => {
+  assert.match(styles, /\.loom-search:hover,[\s\S]{0,80}\.loom-search:focus-within\s*\{\s*outline-color:/,
+    'the affordance must survive the switch from border to outline');
+});

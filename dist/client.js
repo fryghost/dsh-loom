@@ -622,37 +622,67 @@ var STYLES = `
   color: var(--dsw-alias-label-primary);
   font-size: 14px; line-height: 20px;
 }
-/* The sidebar's search field, matching the shipped browser's own control
-   (ui-workspace's WorkspaceBrowser.module.css) rather than the Input atom.
-
-   The atom is built for DIALOG FORMS: 32px tall, a filled bg-layer-1 surface,
-   a 12px radius and 14px text. Dropping that into the sidebar made it the only
-   opaque box in a column whose entire language is "transparent at rest, filled
-   on hover" \u2014 every row, every group header. It read as a foreign, heavier
-   object than the tree it filters.
-
-   The shipped search is 28px, radius-sm, transparent, 13px/18px, with a 14px
-   leading glyph and a clear button. Same numbers here.
+/* The sidebar's search field.
    (No backticks anywhere in this block: it is itself a template literal, and
-   one would end it early \u2014 which has now happened five times.) */
+   one would end it early \u2014 which has now happened five times.)
+
+   The metrics come from the shipped browser's own search (ui-workspace's
+   WorkspaceBrowser.module.css) and NOT from the Input atom. That atom is built
+   for dialog forms \u2014 32px tall, a filled bg-layer-1 surface, a 12px radius,
+   14px text \u2014 so in the sidebar it was the only opaque box in a column whose
+   whole language is "transparent at rest, filled on hover", and it read as a
+   heavier foreign object than the tree it filters.
+
+   What is deliberately NOT copied is that control's two-state geometry: there a
+   28px icon-only button expands into a 30px bordered field with a negative
+   inline margin. Loom's search is always open, so only the resting metrics
+   apply and nothing may move on hover.
+
+   ALIGNMENT \u2014 everything is measured from the sidebar's own 4px padding, so
+   this control sits on the same axes as the tree beneath it:
+
+     group / session leading slot   4 + 6       = 10px
+     search icon slot               4 + 6       = 10px   <- same axis
+     group name text                10 + 16 + 6 = 32px
+     search text                    10 + 16 + 6 = 32px   <- same axis
+
+   The previous version measured 4.5 / 11.5 / 32.5 instead. Two causes, both
+   worth keeping in mind because neither is visible in a screenshot of the
+   control alone:
+
+     - a transparent hairline BORDER keeps layout stable across hover but still
+       offsets everything INSIDE it by half a pixel. An outline with a negative
+       offset draws the same hairline without entering the layout.
+     - the 28px icon box was copied from the shipped ICON-ONLY BUTTON, where it
+       is correct. In an always-open field it overran the 27px content box and
+       pushed the text off the tree's text axis. */
 .loom-search {
   flex: none;
-  display: flex; align-items: center; gap: 0;
+  display: flex; align-items: center; gap: 6px;
   box-sizing: border-box;
   width: 100%; height: 28px;
-  margin: 0 0 8px; padding: 0 4px 0 0;
-  border: 0.5px solid transparent;
+  margin: 0 0 8px; padding: 0 4px 0 6px;
+  border: none;
   border-radius: var(--dsw-radius-sm);
   background: transparent;
   color: var(--dsw-alias-label-secondary);
-  transition: border-color 150ms var(--ds-ease-in-out), background-color 150ms var(--ds-ease-in-out);
+  /* Drawn inside the box and OUT of the layout flow. A transparent border keeps
+     layout stable too, but still offsets everything inside it by half a pixel \u2014
+     which is what put this control on a different axis from the tree. */
+  outline: 0.5px solid transparent;
+  outline-offset: -0.5px;
+  transition: outline-color 150ms var(--ds-ease-in-out);
 }
-/* The border appears only on approach, so the resting state stays flat. */
+/* The hairline appears only on approach, so the resting state stays flat. */
 .loom-search:hover,
-.loom-search:focus-within { border-color: var(--dsw-alias-border-l4); }
+.loom-search:focus-within { outline-color: var(--dsw-alias-border-l4); }
+/* The same 16px leading slot the tree rows use, so this glyph centres on the
+   same axis as every chevron below it. The shipped control's 28px icon box
+   belongs to its icon-only BUTTON, and copying it here overran the 27px content
+   box while pushing the text off the tree's text axis. */
 .loom-search-icon {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 28px; height: 28px;
+  width: 16px; height: 16px;
   color: var(--dsw-alias-label-tertiary);
 }
 .loom-search-input {
@@ -664,7 +694,7 @@ var STYLES = `
 .loom-search-input::placeholder { color: var(--dsw-alias-label-tertiary); }
 .loom-search-clear {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
-  width: 24px; height: 24px; padding: 0;
+  width: 20px; height: 20px; padding: 0;
   border: none; border-radius: var(--dsw-radius-sm);
   background: transparent; cursor: pointer;
   color: var(--dsw-alias-label-secondary);
