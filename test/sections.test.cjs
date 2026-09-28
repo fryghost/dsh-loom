@@ -23,8 +23,10 @@ const subagent = (id, title, updatedAt = 1) => ({ ...summary(id, title, updatedA
 const blank = (id, updatedAt = 1) => ({ ...summary(id, '', updatedAt), blank: true });
 /** The selected Session, as the host marks it: retained by the main view. */
 const selected = (id, updatedAt = 1) => ({ ...blank(id, updatedAt), retainedBy: { mainView: 1 } });
-const workspace = (workspaceId, title, sessionIds) => ({
-  workspaceId, title, path: `/work/${workspaceId}`, sessionIds, createdAt: '', updatedAt: '',
+/** A session that lives at a path, which is what attribution now reads too. */
+const at = (id, cwd, title = id, updatedAt = 1) => ({ ...summary(id, title, updatedAt), cwd });
+const workspace = (workspaceId, title, sessionIds, path) => ({
+  workspaceId, title, path: path ?? `/work/${workspaceId}`, sessionIds, createdAt: '', updatedAt: '',
 });
 
 /**
@@ -126,6 +128,91 @@ test('a session shared by two members of one project appears once', () => {
   const { projectRows } = deriveSections({ projects, snapshot, sessionState });
 
   assert.deepEqual(projectRows[0].sessions.map(s => s.id), ['shared']);
+});
+
+test('a session living in a workspace folder is shown there even if never registered', () => {
+  // The bug this pins, measured on real data: `dsh-project` registered 2
+  // sessions while 7 sat in its directory. The other 5 have a cwd equal to the
+  // workspace path but are absent from `sessionIds`, because DSH's getter
+  // returns only sessions that were ATTACHED at some point:
+  //
+  //   get sessionIds() { return this.record.sessionIds.filter(id => path(id) === this.record.path) }
+  //
+  // They fell through every grouping into 聊天, where they read as orphans
+  // despite plainly living in a workspace folder.
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', ['registered'], '/work/w')],
+    sessions: {
+      registered: at('registered', '/work/w', 'registered'),
+      resident: at('resident', '/work/w', 'resident'),
+    },
+    ids: ['registered', 'resident'],
+  });
+
+  const { workspaceRows, chatSessions } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(idsOf(workspaceRows), ['registered', 'resident'],
+    'a resident belongs to the folder it lives in');
+  assert.deepEqual(chatSessions.map(s => s.id), [],
+    'and must not fall through to 聊天');
+});
+
+test('a resident is not double-counted when it is also registered', () => {
+  // Every id in `sessionIds` already matches by cwd — the getter filters on that
+  // equality — so the union adds only the missing ones.
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', ['one'], '/work/w')],
+    sessions: { one: at('one', '/work/w') },
+    ids: ['one'],
+  });
+
+  const { workspaceRows } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(idsOf(workspaceRows), ['one'], 'union, not concatenation');
+});
+
+test('a session in a SUBdirectory is not guessed into a parent workspace', () => {
+  // DSH attaches on EXACT equality (`header.cwd === record.path`). Nested
+  // workspaces would make "under" ambiguous, and a wrong attribution is worse
+  // than a missing one.
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', [], '/work/w')],
+    sessions: { nested: at('nested', '/work/w/sub') },
+    ids: ['nested'],
+  });
+
+  const { workspaceRows, chatSessions } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(idsOf(workspaceRows), [], 'a subdirectory is not the workspace');
+  assert.deepEqual(chatSessions.map(s => s.id), ['nested'], 'it stays unattributed');
+});
+
+test('a resident also reaches the project that claims its folder', () => {
+  // Projects read the same id set, so the fix applies there too.
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', [], '/work/w')],
+    sessions: { resident: at('resident', '/work/w', 'resident') },
+    ids: ['resident'],
+  });
+  const projects = [{ id: 'p', title: 'Proj', members: [{ workspaceId: 'w' }] }];
+
+  const { projectRows, chatSessions } = deriveSections({ projects, snapshot, sessionState });
+
+  assert.deepEqual(idsOf(projectRows), ['resident'], 'a project shows its folders residents');
+  assert.deepEqual(chatSessions.map(s => s.id), []);
+});
+
+test('a session with no cwd stays unattributed rather than matching anything', () => {
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('w', 'Work', [], '/work/w')],
+    sessions: { loose: summary('loose', 'loose') },
+    ids: ['loose'],
+  });
+
+  const { workspaceRows, chatSessions } = deriveSections({ projects: [], snapshot, sessionState });
+
+  assert.deepEqual(idsOf(workspaceRows), []);
+  assert.deepEqual(chatSessions.map(s => s.id), ['loose']);
 });
 
 test('subagent children never reach any section', () => {

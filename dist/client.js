@@ -40,6 +40,18 @@ var require_sections = __commonJS({
         if (blankAt > 0) visible.unshift(...visible.splice(blankAt, 1));
         return visible;
       };
+      const idsByCwd = /* @__PURE__ */ new Map();
+      for (const id of sessionState && sessionState.ids || []) {
+        const summary = byId[id];
+        if (summary === void 0 || typeof summary.cwd !== "string" || summary.cwd === "") continue;
+        const list = idsByCwd.get(summary.cwd) || [];
+        list.push(id);
+        idsByCwd.set(summary.cwd, list);
+      }
+      const workspaceSessionIds = (workspace) => [
+        ...workspace.sessionIds || [],
+        ...idsByCwd.get(workspace.path) || []
+      ];
       const projectRows = (projects || []).map((project) => ({
         key: project.id,
         project,
@@ -50,7 +62,7 @@ var require_sections = __commonJS({
         startWorkspaceId: project.defaultWorkspaceId || project.members && project.members[0] && project.members[0].workspaceId,
         sessions: collect((project.members || []).flatMap((member) => {
           const workspace = workspaceById.get(member.workspaceId);
-          return workspace && workspace.sessionIds || [];
+          return workspace === void 0 ? [] : workspaceSessionIds(workspace);
         }))
       }));
       const workspaceRows = workspaces.map((workspace) => {
@@ -60,7 +72,7 @@ var require_sections = __commonJS({
           title: workspace.title || workspace.path,
           startWorkspaceId: workspace.workspaceId,
           claimedBy,
-          sessions: claimedBy.length > 0 ? [] : collect(workspace.sessionIds || [])
+          sessions: claimedBy.length > 0 ? [] : collect(workspaceSessionIds(workspace))
         };
       });
       const attributed = /* @__PURE__ */ new Set();

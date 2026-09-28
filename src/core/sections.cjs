@@ -151,6 +151,49 @@ function deriveSections({ projects, snapshot, sessionState, panelActive = false 
     return visible;
   };
 
+  /**
+   * Sessions that LIVE in a workspace directory, whether or not it registered them.
+   *
+   * `WorkspaceView.sessionIds` is not "every session whose cwd is here". DSH
+   * filters the stored attach list by a live cwd fact
+   * (`workspace/src/entity.ts` `get sessionIds`), so an id appears only if the
+   * session was ATTACHED to that workspace at some point. A session created in
+   * the directory but never attached is absent from the list and still has a
+   * matching cwd.
+   *
+   * That gap is not hypothetical: on this machine `dsh-project` registered 2
+   * sessions while 7 sit in its directory, and the other 5 fell through every
+   * grouping into 聊天 — where they looked like orphans despite plainly living
+   * in a workspace folder. The shipped browser has the same gap and answers it
+   * with an "ungrouped" bucket (`ui-workspace/src/client/tree.ts`,
+   * `groupByWorkspace`); showing them under the folder they live in is the more
+   * useful reading of the same facts.
+   *
+   * Because the getter already filters by that same equality, every id in
+   * `sessionIds` also matches by cwd — this union adds only the missing ones and
+   * cannot double-count.
+   *
+   * The comparison is EXACT, matching DSH's own attach rule
+   * (`header.cwd === this.record.path`). A session in a SUBdirectory therefore
+   * stays unattributed rather than being guessed into a parent: nested
+   * workspaces would make "under" ambiguous, and a wrong attribution is worse
+   * than a missing one.
+   */
+  const idsByCwd = new Map();
+  for (const id of (sessionState && sessionState.ids) || []) {
+    const summary = byId[id];
+    if (summary === undefined || typeof summary.cwd !== 'string' || summary.cwd === '') continue;
+    const list = idsByCwd.get(summary.cwd) || [];
+    list.push(id);
+    idsByCwd.set(summary.cwd, list);
+  }
+
+  /** The full id set of one workspace: its registrations plus its residents. */
+  const workspaceSessionIds = workspace => [
+    ...(workspace.sessionIds || []),
+    ...(idsByCwd.get(workspace.path) || []),
+  ];
+
   const projectRows = (projects || []).map(project => ({
     key: project.id,
     project,
@@ -163,7 +206,7 @@ function deriveSections({ projects, snapshot, sessionState, panelActive = false 
     sessions: collect((project.members || [])
       .flatMap(member => {
         const workspace = workspaceById.get(member.workspaceId);
-        return (workspace && workspace.sessionIds) || [];
+        return workspace === undefined ? [] : workspaceSessionIds(workspace);
       })),
   }));
 
@@ -181,12 +224,14 @@ function deriveSections({ projects, snapshot, sessionState, panelActive = false 
       title: workspace.title || workspace.path,
       startWorkspaceId: workspace.workspaceId,
       claimedBy,
-      sessions: claimedBy.length > 0 ? [] : collect(workspace.sessionIds || []),
+      sessions: claimedBy.length > 0 ? [] : collect(workspaceSessionIds(workspace)),
     };
   });
 
-  // Whatever no grouping claimed: a session the stores know but no workspace
-  // accounts for — fresh, forked, or orphaned.
+  // Whatever no grouping claimed. With residents attributed above, this is
+  // genuinely unattributable: a session whose cwd matches no registered
+  // workspace path — typically because its workspace registration was deleted
+  // (DSH's delete removes the registration and keeps the session log).
   const attributed = new Set();
   for (const row of projectRows) for (const summary of row.sessions) attributed.add(summary.id);
   for (const row of workspaceRows) for (const summary of row.sessions) attributed.add(summary.id);

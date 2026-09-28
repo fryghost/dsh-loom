@@ -174,19 +174,27 @@ Loom takes over the sidebar's browse area and splits it into three sections. **A
 |---|---|
 | **Projects** | Sessions under a project's member folders (deduplicated when several members match the same session) |
 | **Workspaces** | **Every registered workspace** is listed; one claimed by a project names the claiming project, and its sessions appear under that project instead of being repeated here |
-| **Chats** | Sessions whose cwd matches no *registered* workspace |
+| **Chats** | Sessions whose cwd matches no registered workspace path |
 
 **A claimed workspace does not disappear.** A folder may belong to several projects at once, so the Workspaces section lists every registered workspace; one that belongs to a project shows that project's name beside it (as in `ws-a` beside `example-project`, with "Claimed by: example-project" on hover) instead of vanishing from the list — vanishing is what made a folder look like it could not be bound to anything else. Sessions are still listed once: a claimed workspace's sessions appear under the project.
 
-### Why "Chats" is not an empty section
+**Attribution reads two things: registration and residence.** `WorkspaceView.sessionIds` is **not** "every session whose cwd is in this directory" — DSH's getter filters the stored attach list by a live cwd fact:
 
-A session always has a cwd, but **belonging to a workspace is a live fact, not a stored guarantee**. DSH defines membership as:
+```ts
+get sessionIds() { return this.record.sessionIds.filter(id => sessionPath(id) === this.record.path) }
+```
 
-> The record's ordered `sessionIds` is the ownership truth; `sessionIds` filters on read — `sessionIds.filter(id => sessionPath(id) === record.path)`
+(`packages/workspace/workspace/src/entity.ts:101-102`.)
 
-(`packages/workspace/workspace/src/entity.ts:101-102`; that package's README calls it "membership is ownership plus a live cwd fact".)
+So an id is present only if the session was **attached** to that workspace at some point. A session created in the directory but never attached is absent from the list while its cwd still equals that directory — a real gap, not a theoretical one: on this machine `dsh-project` registered 2 sessions while 7 live in its directory.
 
-So attribution holds only while **a registered workspace exists whose path equals that session's cwd**. When that stops being true, no workspace claims the session:
+The shipped browser answers that gap with an "ungrouped" bucket (`ui-workspace/src/client/tree.ts`, `groupByWorkspace`). Loom reads the same facts as **showing the session under the folder it lives in**, because "this session lives in `dsh-project`" is the only meaningful place for it.
+
+The comparison is **exact equality**, matching DSH's own attach rule (`header.cwd === record.path`). **A session in a SUBdirectory is not guessed into a parent workspace**: nested workspaces would make "under" ambiguous, and a wrong attribution is worse than a missing one.
+
+### Why "Chats" is still not an empty section
+
+**Belonging to a workspace is a live fact, not a stored guarantee.** Attribution holds only while a registered workspace exists whose path equals the session's cwd. When that stops being true, nothing claims the session:
 
 - **The workspace registration was deleted** — DSH's `delete` explicitly removes the registration only and **does not delete session logs**, leaving those sessions unowned;
 - **The cwd no longer matches any registered path** — for instance the folder was moved or renamed.
