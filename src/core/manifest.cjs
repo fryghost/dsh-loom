@@ -77,6 +77,41 @@ function normalizeMember(raw) {
 }
 
 /**
+ * Rebuild one project's member list from the folders an editor has checked.
+ *
+ * An editor edits MEMBERSHIP and nothing else. Two properties follow, and each
+ * one is the difference between an edit and silent data loss:
+ *
+ *   1. A member that was already present keeps its ROLE (and its note). Writing
+ *      `'writable'` unconditionally rewrote every `readonly` member on save, so
+ *      the recorded reason a folder was added quietly disappeared.
+ *   2. A checked id the registry cannot currently resolve is KEPT. The contract
+ *      above is that unresolvable members are retained and reported as
+ *      `missing`, never pruned — so a folder that is temporarily unavailable
+ *      must not be deleted from the project by an unrelated edit. The `missing`
+ *      flag itself is DERIVED at read time ({@link normalizeManifest} with
+ *      `knownWorkspaceIds`), never authored here, so it is not carried over.
+ *
+ * @param previous - the project's current members, if it already exists.
+ * @param selectedWorkspaceIds - the ids the editor has checked, in display order.
+ * @returns members, in `selectedWorkspaceIds` order.
+ */
+function mergeMembers(previous, selectedWorkspaceIds) {
+  const previousById = new Map();
+  for (const member of Array.isArray(previous) ? previous : []) {
+    const normalized = normalizeMember(member);
+    if (normalized !== undefined && !previousById.has(normalized.workspaceId)) {
+      previousById.set(normalized.workspaceId, normalized);
+    }
+  }
+
+  return uniqueStrings(selectedWorkspaceIds).map(workspaceId => {
+    const kept = previousById.get(workspaceId);
+    return kept === undefined ? { workspaceId, role: ROLE_WRITABLE } : kept;
+  });
+}
+
+/**
  * Normalize the full manifest.
  *
  * @param raw - untrusted manifest value (from disk or a client).
@@ -261,6 +296,7 @@ module.exports = {
   createEmptyManifest,
   defaultWorkspaceFor,
   findProject,
+  mergeMembers,
   migrateFromV1,
   normalizeManifest,
   projectsContaining,

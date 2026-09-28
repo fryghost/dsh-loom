@@ -22,11 +22,19 @@
  */
 
 const React = require('react');
+// Icon names carry the WEIGHT, not a pixel size. DSH 0.1.6 named these by
+// size (`IconPlusOutlineRegular`); `4937343a5e feat(web): unify the client visual
+// language` renamed the family to `...Regular` / `...Medium` before 0.1.7.
+// Destructuring a name that no longer exists yields `undefined` silently, and
+// `React.createElement(undefined)` throws on first render — which makes the
+// slot renderer ABDICATE this entry, so the shipped browser silently returns
+// and the plugin looks uninstalled. Size still reaches the artwork through the
+// `size` prop, so passing 14/16/20 keeps the intended geometry.
 const {
   Button, Tag, StateDot, Modal, Input, Menu,
-  IconPlusOutline16, IconChevronDownOutline14,
-  IconEllipsisOutline16, IconEditOutline16, IconTrashOutline16,
-  IconBranchOutline16, IconArchiveOutline20, IconListPenOutline16,
+  IconPlusOutlineRegular, IconChevronDownOutlineRegular,
+  IconEllipsisOutlineRegular, IconEditOutlineRegular, IconTrashOutlineRegular,
+  IconBranchOutlineRegular, IconArchiveOutlineRegular, IconListPenOutlineRegular,
 } = require('@deepseek-ai/dsh-client-ui-primitives');
 
 const h = React.createElement;
@@ -34,6 +42,11 @@ const h = React.createElement;
 const NS = 'dsh-loom';
 const CHANNEL = '/dsh-loom';
 const { deriveSections } = require('./core/sections.cjs');
+// The editor rebuilds a member list through the SAME core rule the host uses to
+// read it back, so "editing membership" cannot quietly rewrite roles or prune a
+// folder the registry cannot currently resolve. Duplicating that logic here is
+// what let the two halves disagree.
+const { mergeMembers } = require('./core/manifest.cjs');
 
 const dictionaries = {
   zh: {
@@ -96,7 +109,9 @@ const dictionaries = {
     showLess: '收起',
     untitled: '未命名会话',
     noSessions: '还没有会话',
-    noWorkspaces: '没有未归入项目的工作区',
+    claimedBy: '已被项目认领',
+    claimedElsewhere: '会话列在认领它的项目下，此处不重复',
+    noWorkspaces: '没有工作区',
     noChats: '没有未归属的会话',
     noMatches: '没有匹配的会话',
     justNow: '刚刚',
@@ -180,7 +195,9 @@ const dictionaries = {
     showLess: 'Show less',
     untitled: 'Untitled session',
     noSessions: 'No sessions yet',
-    noWorkspaces: 'No workspaces outside a project',
+    claimedBy: 'Claimed by',
+    claimedElsewhere: 'Sessions are listed under the claiming project; not repeated here',
+    noWorkspaces: 'No workspaces',
     noChats: 'No unattributed sessions',
     noMatches: 'No matching sessions',
     justNow: 'just now',
@@ -309,15 +326,36 @@ const STYLES = `
 .loom-pick + .loom-pick { border-top: 0.5px solid var(--dsw-alias-border-l3); }
 .loom-pick:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .loom-pick-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* The name and its role share one line. The NAME owns the truncation and the
+   role never yields: putting the ellipsis on the flex container instead leaves
+   the anonymous text box untruncated, so a long folder name simply overflows. */
 .loom-pick-name {
+  display: flex; align-items: baseline; gap: 6px;
   font-size: 14px; line-height: 20px;
+}
+.loom-pick-title {
+  min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The member's role, at the caption step. It is REPORTED, not edited: this
+   dialog edits membership, and a role rewritten on save is how every readonly
+   member was silently promoted. */
+.loom-pick-role {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px; line-height: 20px;
 }
 .loom-pick-path {
   font-size: 12px; line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* An unresolvable member is still listed and still removable — it must be
+   visible to be managed at all. Muted, not disabled: unchecking it is a
+   deliberate removal, not an error to prevent. These follow the base rules
+   above so the intent does not depend on specificity to win. */
+.loom-pick-missing .loom-pick-name { color: var(--dsw-alias-label-secondary); }
+.loom-pick-missing .loom-pick-path { color: var(--dsw-alias-state-warn-primary); }
 .loom-pick-default {
   flex: none; display: flex; align-items: center; gap: 6px;
   font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary);
@@ -413,6 +451,17 @@ const STYLES = `
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 14px; line-height: 20px;
 }
+/* The projects claiming this folder, at the caption step (12px) so it reads as
+   an annotation on the row rather than a second name competing with it. It
+   shrinks before the name does — the name identifies the row, this only
+   qualifies it — and disappears when there is no room at all. */
+.loom-claimed {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px; line-height: 20px;
+}
+.loom-group-head:hover .loom-claimed { display: none; }
 
 /* The 16px leading slot every row in the shipped browser has. It is what the
    twisty, the status dot, and the indent all align to. */
@@ -708,6 +757,40 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
   const [defaultId, setDefaultId] = React.useState(project?.defaultWorkspaceId ?? '');
   const [error, setError] = React.useState('');
 
+  /**
+   * The rows to offer, from BOTH sources.
+   *
+   * A member the registry cannot resolve right now still gets a row: it is
+   * checked, it says why it cannot be reached, and unchecking it is a deliberate
+   * removal. Rendering only the resolvable workspaces hid those members from the
+   * dialog entirely, so the only way the user could interact with one was to
+   * save and silently lose it.
+   */
+  const rows = React.useMemo(() => {
+    const byId = new Map();
+    for (const member of project?.members ?? []) {
+      if (typeof member?.workspaceId !== 'string' || member.workspaceId.length === 0) continue;
+      byId.set(member.workspaceId, {
+        workspaceId: member.workspaceId,
+        title: member.workspaceId,
+        path: '',
+        role: member.role ?? 'writable',
+        missing: true,
+      });
+    }
+    for (const workspace of workspaces ?? []) {
+      const previous = byId.get(workspace.workspaceId);
+      byId.set(workspace.workspaceId, {
+        workspaceId: workspace.workspaceId,
+        title: workspace.title,
+        path: workspace.path,
+        role: previous?.role ?? 'writable',
+        missing: false,
+      });
+    }
+    return [...byId.values()];
+  }, [project, workspaces]);
+
   const toggle = workspaceId => {
     setSelected(current => {
       const next = new Set(current);
@@ -722,8 +805,13 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
     const trimmed = title.trim();
     if (trimmed.length === 0) return setError(t('needName'));
     if (selected.size === 0) return setError(t('needFolder'));
-    const members = workspaces.filter(workspace => selected.has(workspace.workspaceId))
-      .map(workspace => ({ workspaceId: workspace.workspaceId, role: 'writable' }));
+    // Membership only. `mergeMembers` keeps each retained member's ROLE and note
+    // and keeps a checked id the registry cannot resolve, because the manifest
+    // contract is that unresolved members are retained and reported as
+    // `missing`. Deriving the list from `workspaces` instead did both wrong at
+    // once: every `readonly` member was silently rewritten to `writable`, and a
+    // folder that was merely offline was deleted from the project on save.
+    const members = mergeMembers(project?.members, [...selected]);
     onSave({
       id: project?.id ?? `loom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       title: trimmed,
@@ -764,32 +852,40 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
       h('div', { className: 'loom-picker' },
         // The whole row is a label, so clicking anywhere toggles membership —
         // only the radio is a separate target.
-        workspaces.map(workspace => h('label', {
-          key: workspace.workspaceId,
-          className: 'loom-pick',
+        rows.map(row => h('label', {
+          key: row.workspaceId,
+          className: row.missing ? 'loom-pick loom-pick-missing' : 'loom-pick',
         },
           h('input', {
             type: 'checkbox',
-            checked: selected.has(workspace.workspaceId),
-            onChange: () => toggle(workspace.workspaceId),
+            checked: selected.has(row.workspaceId),
+            onChange: () => toggle(row.workspaceId),
           }),
           h('span', { className: 'loom-pick-text' },
-            h('span', { className: 'loom-pick-name' }, workspace.title),
-            h('span', { className: 'loom-pick-path', title: workspace.path }, workspace.path),
+            h('span', { className: 'loom-pick-name' },
+              h('span', { className: 'loom-pick-title', title: row.title }, row.title),
+              // The role is shown, never edited: this dialog edits membership,
+              // and a role rewritten here is how `readonly` members were lost.
+              h('span', { className: 'loom-pick-role' }, roleLabel(t, row.role)),
+            ),
+            h('span', {
+              className: 'loom-pick-path',
+              title: row.missing ? t('missingHint') : row.path,
+            }, row.missing ? t('missingHint') : row.path),
           ),
           // The starting folder is a per-project preference, not a rank: it
           // never privileges one folder during discovery. It only appears for a
           // member, because a folder that is not in the project cannot be its
           // starting point — a disabled radio on every row was pure noise.
-          selected.has(workspace.workspaceId) && h('span', {
+          selected.has(row.workspaceId) && h('span', {
             className: 'loom-pick-default',
             title: t('defaultStart'),
           },
             h('input', {
               type: 'radio',
               name: 'loom-default',
-              checked: defaultId === workspace.workspaceId,
-              onChange: () => setDefaultId(workspace.workspaceId),
+              checked: defaultId === row.workspaceId,
+              onChange: () => setDefaultId(row.workspaceId),
             }),
             t('defaultStart'),
           ),
@@ -838,7 +934,7 @@ function RowMenu({ items, onSelect, label }) {
       className: 'loom-icon-btn',
       'aria-label': label,
       onClick: event => { event.stopPropagation(); setOpen(value => !value); },
-    }, h(IconEllipsisOutline16, { size: 16 })),
+    }, h(IconEllipsisOutlineRegular, { size: 16 })),
   });
 }
 
@@ -859,9 +955,9 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
   const settled = summary.blank !== true;
 
   const items = [
-    { id: 'rename', label: t('rename'), icon: h(IconEditOutline16, null) },
-    { id: 'fork', label: t('fork'), icon: h(IconBranchOutline16, null) },
-    { id: 'archive', label: t('archive'), icon: h(IconArchiveOutline20, { size: 16 }) },
+    { id: 'rename', label: t('rename'), icon: h(IconEditOutlineRegular, null) },
+    { id: 'fork', label: t('fork'), icon: h(IconBranchOutlineRegular, null) },
+    { id: 'archive', label: t('archive'), icon: h(IconArchiveOutlineRegular, { size: 16 }) },
   ];
 
   return h('div', {
@@ -898,12 +994,13 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
 }
 
 /** A collapsible group row: its own twisty, name, actions, and session list. */
-function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, onRename, onFork, onArchive, currentId, t }) {
+function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, onRename, onFork, onArchive, currentId, claimedBy, t }) {
   const open = !isCollapsed;
   const showAll = isExpanded;
   const PREVIEW = 4;
   const shown = showAll ? row.sessions : row.sessions.slice(0, PREVIEW);
   const hidden = row.sessions.length - PREVIEW;
+  const claimed = Array.isArray(claimedBy) && claimedBy.length > 0;
 
   return h('div', { className: 'loom-group' },
     h('div', {
@@ -917,8 +1014,15 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
       // put: see the note above on why the hover swap was removed.
       h('span', { className: 'loom-slot' },
         h('span', { className: open ? 'loom-twisty' : 'loom-twisty loom-twisty-collapsed' },
-          h(IconChevronDownOutline14, { size: 14 }))),
+          h(IconChevronDownOutlineRegular, { size: 14 }))),
       h('span', { className: 'loom-group-name' }, row.title),
+      // A folder a project claims STAYS in this section — a folder is never
+      // exclusive to a project — so the row says where else it appears instead
+      // of vanishing, which is what made a claimed folder look unbindable.
+      claimed && h('span', {
+        className: 'loom-claimed',
+        title: `${t('claimedBy')}: ${claimedBy.join(', ')}`,
+      }, claimedBy.join(' · ')),
       h('span', { className: 'loom-actions' },
         ...(actions ?? []),
         // A workspace row manages itself through this menu. A project row's
@@ -935,13 +1039,16 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
           title: t('newChat'),
           'aria-label': `${t('newChat')} — ${row.title}`,
           onClick: event => { event.stopPropagation(); onNew(row); },
-        }, h(IconPlusOutline16, { size: 16 })),
+        }, h(IconPlusOutlineRegular, { size: 16 })),
       ),
     ),
 
     open && h('div', { className: 'loom-children' },
       row.sessions.length === 0
-        ? h('div', { className: 'loom-empty-section' }, t('noSessions'))
+        // A claimed folder lists NO sessions here because they are already under
+        // the claiming project — not because it has none. Saying "no sessions
+        // yet" there would be a plain falsehood about the user's data.
+        ? h('div', { className: 'loom-empty-section' }, claimed ? t('claimedElsewhere') : t('noSessions'))
         : shown.map(summary => h(SessionRow, {
             key: summary.id,
             summary,
@@ -1006,8 +1113,30 @@ function PreflightModal({ project, bridge, t, onClose }) {
   }, h(PreflightPanel, { plan, t, busy, onRefresh: run }));
 }
 
+/**
+ * Reports whether a main panel is selected, by CALLING the seat.
+ *
+ * Deliberately its own component. The seat IS a hook, so calling it registers
+ * its hooks against whichever component calls it. Doing that from the sidebar
+ * itself means the sidebar's hook list grows and shrinks as the seat comes and
+ * goes — which happens whenever a `provideRoot()` source is registered or
+ * released (the framework's `rebuildRootBinding` re-renders the whole slot tree
+ * on any such change, and an HMR reload of the layout plugin does exactly that).
+ * React answers a changed hook order with a throw, and a render throw ABDICATES
+ * the slot entry — the same silent failure as the icon rename.
+ *
+ * Because the seat's hooks belong to THIS component, the seat appearing or
+ * disappearing now mounts or unmounts this component instead of re-shaping its
+ * parent. A missing seat simply renders nothing, and the fallback below stands.
+ */
+function PanelSeatProbe({ usePanelInfo, onChange }) {
+  const active = usePanelInfo(info => (info?.activePanelId ?? null) !== null) === true;
+  React.useEffect(() => { onChange(active); }, [active, onChange]);
+  return null;
+}
+
 function LoomSidebar({
-  projects, snapshot, sessionState, t,
+  projects, snapshot, sessionState, panelActive, t,
   onOpenSession, onStartSession, onNewProject, onEditProject, onDeleteProject,
   onPreflightProject,
   onRenameSession, onForkSession, onArchiveSession,
@@ -1017,19 +1146,33 @@ function LoomSidebar({
   const [collapsed, setCollapsed] = React.useState(() => new Set());
   const [expanded, setExpanded] = React.useState(() => new Set());
 
+  // The current Session is DERIVED, never read off the store: `SessionListState`
+  // has no `current` field, so `sessionState.current` was always `undefined` and
+  // every blank Session — including the provisional New Session row — was
+  // filtered out. `panelActive` only affects which row is drawn as SELECTED,
+  // matching the shipped browser (`deriveSections` keeps the two apart).
   const derived = React.useMemo(
-    () => deriveSections({ projects, snapshot, sessionState }),
-    [projects, snapshot, sessionState],
+    () => deriveSections({ projects, snapshot, sessionState, panelActive }),
+    [projects, snapshot, sessionState, panelActive],
   );
 
   const needle = query.trim().toLowerCase();
   const keep = summary => needle === '' || String(summary.displayTitle ?? '').toLowerCase().includes(needle);
   // A query keeps a group when the group itself matches, or when any of its
   // sessions does — so searching a project name still shows its sessions.
-  const narrow = rows => rows
-    .map(row => ({ ...row, sessions: row.sessions.filter(keep) }))
-    .filter(row => row.sessions.length > 0
-      || (needle !== '' && String(row.title ?? '').toLowerCase().includes(needle)));
+  //
+  // With NO query the list is returned COMPLETE. An earlier version filtered out
+  // every row whose session list was empty, which is wrong in two ways once a
+  // claimed folder is in play: a claimed folder legitimately lists no sessions
+  // (they live under the project), and an empty project is still a project the
+  // user made. Both vanished from the section that exists to list them — the
+  // exact disappearance this section's rule was changed to prevent.
+  const narrow = rows => (needle === ''
+    ? rows
+    : rows
+      .map(row => ({ ...row, sessions: row.sessions.filter(keep) }))
+      .filter(row => row.sessions.length > 0
+        || String(row.title ?? '').toLowerCase().includes(needle)));
 
   const projectRows = narrow(derived.projectRows);
   const workspaceRows = narrow(derived.workspaceRows);
@@ -1065,15 +1208,16 @@ function LoomSidebar({
     menu: {
       label: t('workspaceActions'),
       items: [
-        { id: 'rename', label: t('renameWorkspace'), icon: h(IconEditOutline16, null) },
-        { id: 'delete', label: t('deleteWorkspace'), icon: h(IconTrashOutline16, null), danger: true },
+        { id: 'rename', label: t('renameWorkspace'), icon: h(IconEditOutlineRegular, null) },
+        { id: 'delete', label: t('deleteWorkspace'), icon: h(IconTrashOutlineRegular, null), danger: true },
       ],
       onSelect: id => {
         if (id === 'rename') onRenameWorkspace(row.key, row.title);
         if (id === 'delete') onDeleteWorkspace(row.key);
       },
     },
-    currentId: sessionState?.current,
+    currentId: derived.highlighted,
+    claimedBy: row.claimedBy,
     t,
   });
 
@@ -1093,7 +1237,7 @@ function LoomSidebar({
         onClick: () => toggleSection(id),
       },
         h('span', { className: open ? 'loom-twisty' : 'loom-twisty loom-twisty-collapsed' },
-          h(IconChevronDownOutline14, { size: 14 })),
+          h(IconChevronDownOutlineRegular, { size: 14 })),
         h('span', null, label),
         count > 0 && h('span', { className: 'loom-section-count' }, String(count)),
       ),
@@ -1121,7 +1265,7 @@ function LoomSidebar({
       h('button', {
         type: 'button', className: 'loom-icon-btn',
         title: t('newProject'), 'aria-label': t('newProject'), onClick: onNewProject,
-      }, h(IconPlusOutline16, { size: 16 }))),
+      }, h(IconPlusOutlineRegular, { size: 16 }))),
 
     sectionBody('projects', () => (projectRows.length === 0
       ? h('div', { className: 'loom-empty-section' }, t('noProjects'))
@@ -1137,16 +1281,16 @@ function LoomSidebar({
           onRename: onRenameSession,
           onFork: onForkSession,
           onArchive: onArchiveSession,
-          currentId: sessionState?.current,
+          currentId: derived.highlighted,
           t,
           // One ellipsis, matching the shipped row affordance. The preflight lives
           // here because it is a verb on a project, not a place to navigate to.
           menu: {
             label: t('projectActions'),
             items: [
-              { id: 'preflight', label: t('preflight'), icon: h(IconListPenOutline16, null) },
-              { id: 'edit', label: t('edit'), icon: h(IconEditOutline16, null) },
-              { id: 'delete', label: t('delete'), icon: h(IconTrashOutline16, null), danger: true },
+              { id: 'preflight', label: t('preflight'), icon: h(IconListPenOutlineRegular, null) },
+              { id: 'edit', label: t('edit'), icon: h(IconEditOutlineRegular, null) },
+              { id: 'delete', label: t('delete'), icon: h(IconTrashOutlineRegular, null), danger: true },
             ],
             onSelect: id => {
               if (id === 'preflight') onPreflightProject(row.project);
@@ -1160,7 +1304,7 @@ function LoomSidebar({
       h('button', {
         type: 'button', className: 'loom-icon-btn',
         title: t('newWorkspace'), 'aria-label': t('newWorkspace'), onClick: onNewWorkspace,
-      }, h(IconPlusOutline16, { size: 16 }))),
+      }, h(IconPlusOutlineRegular, { size: 16 }))),
     sectionBody('workspaces', () => (workspaceRows.length === 0
       ? h('div', { className: 'loom-empty-section' }, t('noWorkspaces'))
       : workspaceRows.map(group))),
@@ -1174,7 +1318,7 @@ function LoomSidebar({
           chatSessions.map(summary => h(SessionRow, {
             key: summary.id,
             summary,
-            current: summary.id === sessionState?.current,
+            current: summary.id === derived.highlighted,
             onClick: () => onOpenSession(summary.id),
             onRename: onRenameSession,
             onFork: onForkSession,
@@ -1192,9 +1336,14 @@ function LoomSidebar({
  */
 function LoomSidebarHost({ bridge, ctx }) {
   /** Mounted only once both seats are known to exist, so its hooks are unconditional. */
-  function LoomSidebarSeated({ useWorkspaces, useSessions, bridge, ctx, t }) {
+  function LoomSidebarSeated({ useWorkspaces, useSessions, usePanelInfo, bridge, ctx, t }) {
     const snapshot = useWorkspaces(state => state);
     const sessionState = useSessions(state => state);
+    // Whether a main panel is selected — read through a CHILD component, so the
+    // seat's own hooks belong to that child rather than to this one. See
+    // `PanelSeatProbe`: calling the seat here would change THIS component's hook
+    // order whenever the seat came or went, and React answers that with a throw.
+    const [panelActive, setPanelActive] = React.useState(false);
     const [manifest, setManifest] = React.useState(undefined);
     const [error, setError] = React.useState('');
     const [editing, setEditing] = React.useState(null);
@@ -1225,11 +1374,14 @@ function LoomSidebarHost({ bridge, ctx }) {
     const projects = manifest?.projects ?? [];
 
     return h(React.Fragment, null,
+      usePanelInfo !== undefined
+        && h(PanelSeatProbe, { usePanelInfo, onChange: setPanelActive }),
       error.length > 0 && h('div', { className: 'loom-empty-section loom-warn' }, error),
       h(LoomSidebar, {
         projects,
         snapshot,
         sessionState,
+        panelActive,
         t,
         // Open through the navigation face, NOT `ctx.sessions.open` directly.
         //
@@ -1350,17 +1502,22 @@ function LoomSidebarHost({ bridge, ctx }) {
   /**
    * The seat check.
    *
-   * It must happen BEFORE the seated component mounts, not inside it: a hook
-   * called conditionally changes the hook order between renders, which React
-   * treats as a crash. Checking here and mounting Seated only on success is what
-   * keeps every hook in that component unconditional.
+   * The two REQUIRED seats are checked here, before the seated component mounts,
+   * because a hook called conditionally changes the hook order between renders —
+   * which React treats as a crash. `usePanelInfo` is passed through only when it
+   * is a function: it is OPTIONAL, and when it is absent nothing calls it (the
+   * probe is not mounted), so no hook order depends on it.
    */
   return function LoomSidebarBound(props) {
-    const { useWorkspaces, useSessions, t: seatT } = props ?? {};
+    const { useWorkspaces, useSessions, usePanelInfo, t: seatT } = props ?? {};
     if (typeof useWorkspaces !== 'function' || typeof useSessions !== 'function') return null;
     return h(LoomSidebarSeated, {
       useWorkspaces,
       useSessions,
+      // Undefined when absent, never a substitute hook: the substitute used to
+      // live here and its hook count differed from the real seat's, so a seat
+      // that appeared later reshaped the caller's hook list and crashed it.
+      usePanelInfo: typeof usePanelInfo === 'function' ? usePanelInfo : undefined,
       bridge,
       ctx,
       // The panel owns its dictionaries, so a missing seat still translates.

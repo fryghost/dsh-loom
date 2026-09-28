@@ -10,15 +10,28 @@ var require_sections = __commonJS({
     function sessionVisible(summary, current, archived) {
       return summary.origin !== "subagent" && !archived.has(summary.id) && (!summary.blank || summary.id === current);
     }
-    function deriveSections2({ projects, snapshot, sessionState } = {}) {
+    function currentSessionId(sessionState) {
+      const byId = sessionState && sessionState.byId || {};
+      for (const session of Object.values(byId)) {
+        if (((session || {}).retainedBy || {}).mainView > 0) return session.id;
+      }
+      return void 0;
+    }
+    function deriveSections2({ projects, snapshot, sessionState, panelActive = false } = {}) {
       const byId = sessionState && sessionState.byId || {};
       const archived = new Set(snapshot && snapshot.archivedSessionIds || []);
-      const current = sessionState && sessionState.current;
+      const current = currentSessionId(sessionState);
+      const highlighted = panelActive === true ? void 0 : current;
       const workspaces = snapshot && snapshot.items || [];
       const workspaceById = new Map(workspaces.map((workspace) => [workspace.workspaceId, workspace]));
-      const claimedWorkspaceIds = /* @__PURE__ */ new Set();
+      const claimsByWorkspaceId = /* @__PURE__ */ new Map();
       for (const project of projects || []) {
-        for (const member of project.members || []) claimedWorkspaceIds.add(member.workspaceId);
+        const label = project.title || project.id;
+        for (const member of project.members || []) {
+          const claims = claimsByWorkspaceId.get(member.workspaceId) || [];
+          claims.push(label);
+          claimsByWorkspaceId.set(member.workspaceId, claims);
+        }
       }
       const collect = (ids) => {
         const visible = [...new Set(ids)].map((id) => byId[id]).filter((summary) => summary !== void 0 && sessionVisible(summary, current, archived)).sort((left, right) => (right.updatedAt || 0) - (left.updatedAt || 0));
@@ -39,19 +52,201 @@ var require_sections = __commonJS({
           return workspace && workspace.sessionIds || [];
         }))
       }));
-      const workspaceRows = workspaces.filter((workspace) => !claimedWorkspaceIds.has(workspace.workspaceId)).map((workspace) => ({
-        key: workspace.workspaceId,
-        title: workspace.title || workspace.path,
-        startWorkspaceId: workspace.workspaceId,
-        sessions: collect(workspace.sessionIds || [])
-      }));
+      const workspaceRows = workspaces.map((workspace) => {
+        const claimedBy = claimsByWorkspaceId.get(workspace.workspaceId) || [];
+        return {
+          key: workspace.workspaceId,
+          title: workspace.title || workspace.path,
+          startWorkspaceId: workspace.workspaceId,
+          claimedBy,
+          sessions: claimedBy.length > 0 ? [] : collect(workspace.sessionIds || [])
+        };
+      });
       const attributed = /* @__PURE__ */ new Set();
       for (const row of projectRows) for (const summary of row.sessions) attributed.add(summary.id);
       for (const row of workspaceRows) for (const summary of row.sessions) attributed.add(summary.id);
       const chatSessions = collect(sessionState && sessionState.ids || []).filter((summary) => !attributed.has(summary.id));
-      return { projectRows, workspaceRows, chatSessions };
+      return { projectRows, workspaceRows, chatSessions, current, highlighted };
     }
-    module2.exports = { deriveSections: deriveSections2, sessionVisible };
+    module2.exports = { currentSessionId, deriveSections: deriveSections2, sessionVisible };
+  }
+});
+
+// src/core/manifest.cjs
+var require_manifest = __commonJS({
+  "src/core/manifest.cjs"(exports2, module2) {
+    var SCHEMA_VERSION = 2;
+    var ROLE_WRITABLE = "writable";
+    var ROLE_READONLY = "readonly";
+    var ROLES = [ROLE_WRITABLE, ROLE_READONLY];
+    function isPlainObject(value) {
+      return typeof value === "object" && value !== null && !Array.isArray(value);
+    }
+    function uniqueStrings(values) {
+      const seen = /* @__PURE__ */ new Set();
+      const result = [];
+      for (const value of values || []) {
+        if (typeof value !== "string" || value.length === 0 || seen.has(value)) continue;
+        seen.add(value);
+        result.push(value);
+      }
+      return result;
+    }
+    function normalizeTitle(value, fallback) {
+      if (typeof value !== "string") return fallback;
+      const trimmed = value.trim().slice(0, 80);
+      return trimmed.length > 0 ? trimmed : fallback;
+    }
+    function normalizeRole(value) {
+      return ROLES.includes(value) ? value : ROLE_WRITABLE;
+    }
+    function normalizeMember(raw) {
+      if (typeof raw === "string") {
+        const workspaceId2 = raw.trim();
+        return workspaceId2.length === 0 ? void 0 : { workspaceId: workspaceId2, role: ROLE_WRITABLE };
+      }
+      if (!isPlainObject(raw)) return void 0;
+      const workspaceId = typeof raw.workspaceId === "string" ? raw.workspaceId.trim() : "";
+      if (workspaceId.length === 0) return void 0;
+      const note = typeof raw.note === "string" ? raw.note.trim().slice(0, 200) : "";
+      return {
+        workspaceId,
+        role: normalizeRole(raw.role),
+        ...note.length > 0 ? { note } : {}
+      };
+    }
+    function mergeMembers2(previous, selectedWorkspaceIds) {
+      const previousById = /* @__PURE__ */ new Map();
+      for (const member of Array.isArray(previous) ? previous : []) {
+        const normalized = normalizeMember(member);
+        if (normalized !== void 0 && !previousById.has(normalized.workspaceId)) {
+          previousById.set(normalized.workspaceId, normalized);
+        }
+      }
+      return uniqueStrings(selectedWorkspaceIds).map((workspaceId) => {
+        const kept = previousById.get(workspaceId);
+        return kept === void 0 ? { workspaceId, role: ROLE_WRITABLE } : kept;
+      });
+    }
+    function normalizeManifest(raw, options = {}) {
+      const known = options.knownWorkspaceIds === void 0 ? void 0 : new Set(knownWorkspaceIdsOf(options.knownWorkspaceIds));
+      const projects = [];
+      const dropped = [];
+      const seenProjectIds = /* @__PURE__ */ new Set();
+      for (const rawProject of isPlainObject(raw) && Array.isArray(raw.projects) ? raw.projects : []) {
+        if (!isPlainObject(rawProject)) {
+          dropped.push({ reason: "not-an-object" });
+          continue;
+        }
+        const id = typeof rawProject.id === "string" ? rawProject.id.trim() : "";
+        if (id.length === 0 || seenProjectIds.has(id)) {
+          dropped.push({ reason: id.length === 0 ? "missing-id" : "duplicate-id", id });
+          continue;
+        }
+        const members = [];
+        const seenMembers = /* @__PURE__ */ new Set();
+        for (const rawMember of Array.isArray(rawProject.members) ? rawProject.members : []) {
+          const member = normalizeMember(rawMember);
+          if (member === void 0) {
+            dropped.push({ reason: "invalid-member", projectId: id });
+            continue;
+          }
+          if (seenMembers.has(member.workspaceId)) continue;
+          seenMembers.add(member.workspaceId);
+          members.push(member);
+        }
+        const defaultWorkspaceId = typeof rawProject.defaultWorkspaceId === "string" && seenMembers.has(rawProject.defaultWorkspaceId) ? rawProject.defaultWorkspaceId : members[0]?.workspaceId;
+        seenProjectIds.add(id);
+        projects.push({
+          id,
+          title: normalizeTitle(rawProject.title, id),
+          members: members.map((member) => known === void 0 || known.has(member.workspaceId) ? member : { ...member, missing: true }),
+          ...defaultWorkspaceId === void 0 ? {} : { defaultWorkspaceId },
+          createdAt: typeof rawProject.createdAt === "string" ? rawProject.createdAt : void 0,
+          updatedAt: typeof rawProject.updatedAt === "string" ? rawProject.updatedAt : void 0
+        });
+      }
+      return { schemaVersion: SCHEMA_VERSION, projects, dropped };
+    }
+    function knownWorkspaceIdsOf(value) {
+      return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+    }
+    function readManifest(value, options = {}) {
+      if (!isPlainObject(value)) return normalizeManifest(void 0, options);
+      if (value.schemaVersion === SCHEMA_VERSION) return normalizeManifest(value, options);
+      if (Number.isInteger(value.schemaVersion) && value.schemaVersion > SCHEMA_VERSION) {
+        return { ...normalizeManifest(void 0, options), supported: false, foundVersion: value.schemaVersion };
+      }
+      return normalizeManifest(void 0, options);
+    }
+    function projectsContaining(manifest, workspaceId) {
+      if (typeof workspaceId !== "string" || workspaceId.length === 0) return [];
+      return (manifest?.projects || []).filter((project) => project.members.some((member) => member.workspaceId === workspaceId));
+    }
+    function findProject(manifest, projectId) {
+      return (manifest?.projects || []).find((project) => project.id === projectId);
+    }
+    function defaultWorkspaceFor(manifest, projectId) {
+      const project = findProject(manifest, projectId);
+      if (project === void 0) return void 0;
+      const preferred = project.defaultWorkspaceId;
+      const chosen = project.members.find((member) => member.workspaceId === preferred) ?? project.members[0];
+      return chosen?.workspaceId;
+    }
+    function upsertProject(manifest, project, options = {}) {
+      const incoming = normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [project] }, options).projects[0];
+      if (incoming === void 0) return normalizeManifest(manifest, options);
+      const rest = (manifest?.projects || []).filter((existing) => existing.id !== incoming.id);
+      return normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [...rest, incoming] }, options);
+    }
+    function removeProject(manifest, projectId) {
+      return normalizeManifest({
+        schemaVersion: SCHEMA_VERSION,
+        projects: (manifest?.projects || []).filter((project) => project.id !== projectId)
+      });
+    }
+    function migrateFromV1(value) {
+      const groups = Array.isArray(value) ? value : isPlainObject(value) ? value.groups : void 0;
+      if (!Array.isArray(groups)) return { manifest: normalizeManifest(void 0), migrated: 0, note: "no-v1-groups" };
+      const projects = [];
+      for (const group of groups) {
+        if (!isPlainObject(group)) continue;
+        const id = typeof group.id === "string" ? group.id.trim() : "";
+        if (id.length === 0) continue;
+        const memberIds = uniqueStrings(group.memberWorkspaceIds);
+        if (memberIds.length === 0) continue;
+        projects.push({
+          id,
+          title: normalizeTitle(group.title, id),
+          members: memberIds.map((workspaceId) => ({ workspaceId, role: ROLE_WRITABLE })),
+          ...typeof group.primaryWorkspaceId === "string" && memberIds.includes(group.primaryWorkspaceId) ? { defaultWorkspaceId: group.primaryWorkspaceId } : {}
+        });
+      }
+      return {
+        manifest: normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects }),
+        migrated: projects.length,
+        note: "v1-membership-was-exclusive; previously dropped memberships are not recoverable"
+      };
+    }
+    function createEmptyManifest() {
+      return { schemaVersion: SCHEMA_VERSION, projects: [], dropped: [] };
+    }
+    module2.exports = {
+      ROLE_READONLY,
+      ROLE_WRITABLE,
+      ROLES,
+      SCHEMA_VERSION,
+      createEmptyManifest,
+      defaultWorkspaceFor,
+      findProject,
+      mergeMembers: mergeMembers2,
+      migrateFromV1,
+      normalizeManifest,
+      projectsContaining,
+      readManifest,
+      removeProject,
+      upsertProject
+    };
   }
 });
 
@@ -64,19 +259,20 @@ var {
   Modal,
   Input,
   Menu,
-  IconPlusOutline16,
-  IconChevronDownOutline14,
-  IconEllipsisOutline16,
-  IconEditOutline16,
-  IconTrashOutline16,
-  IconBranchOutline16,
-  IconArchiveOutline20,
-  IconListPenOutline16
+  IconPlusOutlineRegular,
+  IconChevronDownOutlineRegular,
+  IconEllipsisOutlineRegular,
+  IconEditOutlineRegular,
+  IconTrashOutlineRegular,
+  IconBranchOutlineRegular,
+  IconArchiveOutlineRegular,
+  IconListPenOutlineRegular
 } = require("@deepseek-ai/dsh-client-ui-primitives");
 var h = React.createElement;
 var NS = "dsh-loom";
 var CHANNEL = "/dsh-loom";
 var { deriveSections } = require_sections();
+var { mergeMembers } = require_manifest();
 var dictionaries = {
   zh: {
     projects: "\u9879\u76EE",
@@ -138,7 +334,9 @@ var dictionaries = {
     showLess: "\u6536\u8D77",
     untitled: "\u672A\u547D\u540D\u4F1A\u8BDD",
     noSessions: "\u8FD8\u6CA1\u6709\u4F1A\u8BDD",
-    noWorkspaces: "\u6CA1\u6709\u672A\u5F52\u5165\u9879\u76EE\u7684\u5DE5\u4F5C\u533A",
+    claimedBy: "\u5DF2\u88AB\u9879\u76EE\u8BA4\u9886",
+    claimedElsewhere: "\u4F1A\u8BDD\u5217\u5728\u8BA4\u9886\u5B83\u7684\u9879\u76EE\u4E0B\uFF0C\u6B64\u5904\u4E0D\u91CD\u590D",
+    noWorkspaces: "\u6CA1\u6709\u5DE5\u4F5C\u533A",
     noChats: "\u6CA1\u6709\u672A\u5F52\u5C5E\u7684\u4F1A\u8BDD",
     noMatches: "\u6CA1\u6709\u5339\u914D\u7684\u4F1A\u8BDD",
     justNow: "\u521A\u521A",
@@ -222,7 +420,9 @@ var dictionaries = {
     showLess: "Show less",
     untitled: "Untitled session",
     noSessions: "No sessions yet",
-    noWorkspaces: "No workspaces outside a project",
+    claimedBy: "Claimed by",
+    claimedElsewhere: "Sessions are listed under the claiming project; not repeated here",
+    noWorkspaces: "No workspaces",
     noChats: "No unattributed sessions",
     noMatches: "No matching sessions",
     justNow: "just now",
@@ -342,15 +542,36 @@ var STYLES = `
 .loom-pick + .loom-pick { border-top: 0.5px solid var(--dsw-alias-border-l3); }
 .loom-pick:hover { background: var(--dsw-alias-interactive-bg-hover); }
 .loom-pick-text { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+/* The name and its role share one line. The NAME owns the truncation and the
+   role never yields: putting the ellipsis on the flex container instead leaves
+   the anonymous text box untruncated, so a long folder name simply overflows. */
 .loom-pick-name {
+  display: flex; align-items: baseline; gap: 6px;
   font-size: 14px; line-height: 20px;
+}
+.loom-pick-title {
+  min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+/* The member's role, at the caption step. It is REPORTED, not edited: this
+   dialog edits membership, and a role rewritten on save is how every readonly
+   member was silently promoted. */
+.loom-pick-role {
+  flex: none;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px; line-height: 20px;
 }
 .loom-pick-path {
   font-size: 12px; line-height: 18px;
   color: var(--dsw-alias-label-tertiary);
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
+/* An unresolvable member is still listed and still removable \u2014 it must be
+   visible to be managed at all. Muted, not disabled: unchecking it is a
+   deliberate removal, not an error to prevent. These follow the base rules
+   above so the intent does not depend on specificity to win. */
+.loom-pick-missing .loom-pick-name { color: var(--dsw-alias-label-secondary); }
+.loom-pick-missing .loom-pick-path { color: var(--dsw-alias-state-warn-primary); }
 .loom-pick-default {
   flex: none; display: flex; align-items: center; gap: 6px;
   font-size: 12px; line-height: 20px; color: var(--dsw-alias-label-secondary);
@@ -446,6 +667,17 @@ var STYLES = `
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
   font-size: 14px; line-height: 20px;
 }
+/* The projects claiming this folder, at the caption step (12px) so it reads as
+   an annotation on the row rather than a second name competing with it. It
+   shrinks before the name does \u2014 the name identifies the row, this only
+   qualifies it \u2014 and disappears when there is no room at all. */
+.loom-claimed {
+  flex: 0 1 auto; min-width: 0;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  color: var(--dsw-alias-label-tertiary);
+  font-size: 12px; line-height: 20px;
+}
+.loom-group-head:hover .loom-claimed { display: none; }
 
 /* The 16px leading slot every row in the shipped browser has. It is what the
    twisty, the status dot, and the indent all align to. */
@@ -580,6 +812,9 @@ function contribute(ctx, bridge, slot, options, component) {
       throw error;
     }
   };
+}
+function roleLabel(t, role) {
+  return role === "readonly" ? t("readonly") : t("writable");
 }
 function localTranslate(ctx) {
   return (key, values) => {
@@ -721,6 +956,30 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
   const [selected, setSelected] = React.useState(() => new Set((project?.members ?? []).map((m) => m.workspaceId)));
   const [defaultId, setDefaultId] = React.useState(project?.defaultWorkspaceId ?? "");
   const [error, setError] = React.useState("");
+  const rows = React.useMemo(() => {
+    const byId = /* @__PURE__ */ new Map();
+    for (const member of project?.members ?? []) {
+      if (typeof member?.workspaceId !== "string" || member.workspaceId.length === 0) continue;
+      byId.set(member.workspaceId, {
+        workspaceId: member.workspaceId,
+        title: member.workspaceId,
+        path: "",
+        role: member.role ?? "writable",
+        missing: true
+      });
+    }
+    for (const workspace of workspaces ?? []) {
+      const previous = byId.get(workspace.workspaceId);
+      byId.set(workspace.workspaceId, {
+        workspaceId: workspace.workspaceId,
+        title: workspace.title,
+        path: workspace.path,
+        role: previous?.role ?? "writable",
+        missing: false
+      });
+    }
+    return [...byId.values()];
+  }, [project, workspaces]);
   const toggle = (workspaceId) => {
     setSelected((current) => {
       const next = new Set(current);
@@ -734,7 +993,7 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
     const trimmed = title.trim();
     if (trimmed.length === 0) return setError(t("needName"));
     if (selected.size === 0) return setError(t("needFolder"));
-    const members = workspaces.filter((workspace) => selected.has(workspace.workspaceId)).map((workspace) => ({ workspaceId: workspace.workspaceId, role: "writable" }));
+    const members = mergeMembers(project?.members, [...selected]);
     onSave({
       id: project?.id ?? `loom-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`,
       title: trimmed,
@@ -786,28 +1045,38 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
         { className: "loom-picker" },
         // The whole row is a label, so clicking anywhere toggles membership —
         // only the radio is a separate target.
-        workspaces.map((workspace) => h(
+        rows.map((row) => h(
           "label",
           {
-            key: workspace.workspaceId,
-            className: "loom-pick"
+            key: row.workspaceId,
+            className: row.missing ? "loom-pick loom-pick-missing" : "loom-pick"
           },
           h("input", {
             type: "checkbox",
-            checked: selected.has(workspace.workspaceId),
-            onChange: () => toggle(workspace.workspaceId)
+            checked: selected.has(row.workspaceId),
+            onChange: () => toggle(row.workspaceId)
           }),
           h(
             "span",
             { className: "loom-pick-text" },
-            h("span", { className: "loom-pick-name" }, workspace.title),
-            h("span", { className: "loom-pick-path", title: workspace.path }, workspace.path)
+            h(
+              "span",
+              { className: "loom-pick-name" },
+              h("span", { className: "loom-pick-title", title: row.title }, row.title),
+              // The role is shown, never edited: this dialog edits membership,
+              // and a role rewritten here is how `readonly` members were lost.
+              h("span", { className: "loom-pick-role" }, roleLabel(t, row.role))
+            ),
+            h("span", {
+              className: "loom-pick-path",
+              title: row.missing ? t("missingHint") : row.path
+            }, row.missing ? t("missingHint") : row.path)
           ),
           // The starting folder is a per-project preference, not a rank: it
           // never privileges one folder during discovery. It only appears for a
           // member, because a folder that is not in the project cannot be its
           // starting point — a disabled radio on every row was pure noise.
-          selected.has(workspace.workspaceId) && h(
+          selected.has(row.workspaceId) && h(
             "span",
             {
               className: "loom-pick-default",
@@ -816,8 +1085,8 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
             h("input", {
               type: "radio",
               name: "loom-default",
-              checked: defaultId === workspace.workspaceId,
-              onChange: () => setDefaultId(workspace.workspaceId)
+              checked: defaultId === row.workspaceId,
+              onChange: () => setDefaultId(row.workspaceId)
             }),
             t("defaultStart")
           )
@@ -859,16 +1128,16 @@ function RowMenu({ items, onSelect, label }) {
         event.stopPropagation();
         setOpen((value) => !value);
       }
-    }, h(IconEllipsisOutline16, { size: 16 }))
+    }, h(IconEllipsisOutlineRegular, { size: 16 }))
   });
 }
 function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t }) {
   const title = summary.displayTitle || t("untitled");
   const settled = summary.blank !== true;
   const items = [
-    { id: "rename", label: t("rename"), icon: h(IconEditOutline16, null) },
-    { id: "fork", label: t("fork"), icon: h(IconBranchOutline16, null) },
-    { id: "archive", label: t("archive"), icon: h(IconArchiveOutline20, { size: 16 }) }
+    { id: "rename", label: t("rename"), icon: h(IconEditOutlineRegular, null) },
+    { id: "fork", label: t("fork"), icon: h(IconBranchOutlineRegular, null) },
+    { id: "archive", label: t("archive"), icon: h(IconArchiveOutlineRegular, { size: 16 }) }
   ];
   return h(
     "div",
@@ -909,12 +1178,13 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
     )
   );
 }
-function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, onRename, onFork, onArchive, currentId, t }) {
+function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, onRename, onFork, onArchive, currentId, claimedBy, t }) {
   const open = !isCollapsed;
   const showAll = isExpanded;
   const PREVIEW = 4;
   const shown = showAll ? row.sessions : row.sessions.slice(0, PREVIEW);
   const hidden = row.sessions.length - PREVIEW;
+  const claimed = Array.isArray(claimedBy) && claimedBy.length > 0;
   return h(
     "div",
     { className: "loom-group" },
@@ -935,10 +1205,17 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
         h(
           "span",
           { className: open ? "loom-twisty" : "loom-twisty loom-twisty-collapsed" },
-          h(IconChevronDownOutline14, { size: 14 })
+          h(IconChevronDownOutlineRegular, { size: 14 })
         )
       ),
       h("span", { className: "loom-group-name" }, row.title),
+      // A folder a project claims STAYS in this section — a folder is never
+      // exclusive to a project — so the row says where else it appears instead
+      // of vanishing, which is what made a claimed folder look unbindable.
+      claimed && h("span", {
+        className: "loom-claimed",
+        title: `${t("claimedBy")}: ${claimedBy.join(", ")}`
+      }, claimedBy.join(" \xB7 ")),
       h(
         "span",
         { className: "loom-actions" },
@@ -960,13 +1237,13 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
             event.stopPropagation();
             onNew(row);
           }
-        }, h(IconPlusOutline16, { size: 16 }))
+        }, h(IconPlusOutlineRegular, { size: 16 }))
       )
     ),
     open && h(
       "div",
       { className: "loom-children" },
-      row.sessions.length === 0 ? h("div", { className: "loom-empty-section" }, t("noSessions")) : shown.map((summary) => h(SessionRow, {
+      row.sessions.length === 0 ? h("div", { className: "loom-empty-section" }, claimed ? t("claimedElsewhere") : t("noSessions")) : shown.map((summary) => h(SessionRow, {
         key: summary.id,
         summary,
         current: summary.id === currentId,
@@ -1011,10 +1288,18 @@ function PreflightModal({ project, bridge, t, onClose }) {
     className: "loom-editor"
   }, h(PreflightPanel, { plan, t, busy, onRefresh: run }));
 }
+function PanelSeatProbe({ usePanelInfo, onChange }) {
+  const active = usePanelInfo((info) => (info?.activePanelId ?? null) !== null) === true;
+  React.useEffect(() => {
+    onChange(active);
+  }, [active, onChange]);
+  return null;
+}
 function LoomSidebar({
   projects,
   snapshot,
   sessionState,
+  panelActive,
   t,
   onOpenSession,
   onStartSession,
@@ -1033,12 +1318,12 @@ function LoomSidebar({
   const [collapsed, setCollapsed] = React.useState(() => /* @__PURE__ */ new Set());
   const [expanded, setExpanded] = React.useState(() => /* @__PURE__ */ new Set());
   const derived = React.useMemo(
-    () => deriveSections({ projects, snapshot, sessionState }),
-    [projects, snapshot, sessionState]
+    () => deriveSections({ projects, snapshot, sessionState, panelActive }),
+    [projects, snapshot, sessionState, panelActive]
   );
   const needle = query.trim().toLowerCase();
   const keep = (summary) => needle === "" || String(summary.displayTitle ?? "").toLowerCase().includes(needle);
-  const narrow = (rows) => rows.map((row) => ({ ...row, sessions: row.sessions.filter(keep) })).filter((row) => row.sessions.length > 0 || needle !== "" && String(row.title ?? "").toLowerCase().includes(needle));
+  const narrow = (rows) => needle === "" ? rows : rows.map((row) => ({ ...row, sessions: row.sessions.filter(keep) })).filter((row) => row.sessions.length > 0 || String(row.title ?? "").toLowerCase().includes(needle));
   const projectRows = narrow(derived.projectRows);
   const workspaceRows = narrow(derived.workspaceRows);
   const chatSessions = derived.chatSessions.filter(keep);
@@ -1071,15 +1356,16 @@ function LoomSidebar({
     menu: {
       label: t("workspaceActions"),
       items: [
-        { id: "rename", label: t("renameWorkspace"), icon: h(IconEditOutline16, null) },
-        { id: "delete", label: t("deleteWorkspace"), icon: h(IconTrashOutline16, null), danger: true }
+        { id: "rename", label: t("renameWorkspace"), icon: h(IconEditOutlineRegular, null) },
+        { id: "delete", label: t("deleteWorkspace"), icon: h(IconTrashOutlineRegular, null), danger: true }
       ],
       onSelect: (id) => {
         if (id === "rename") onRenameWorkspace(row.key, row.title);
         if (id === "delete") onDeleteWorkspace(row.key);
       }
     },
-    currentId: sessionState?.current,
+    currentId: derived.highlighted,
+    claimedBy: row.claimedBy,
     t
   });
   const [hiddenSections, setHiddenSections] = React.useState(() => /* @__PURE__ */ new Set());
@@ -1101,7 +1387,7 @@ function LoomSidebar({
         h(
           "span",
           { className: open ? "loom-twisty" : "loom-twisty loom-twisty-collapsed" },
-          h(IconChevronDownOutline14, { size: 14 })
+          h(IconChevronDownOutlineRegular, { size: 14 })
         ),
         h("span", null, label),
         count > 0 && h("span", { className: "loom-section-count" }, String(count))
@@ -1135,7 +1421,7 @@ function LoomSidebar({
         title: t("newProject"),
         "aria-label": t("newProject"),
         onClick: onNewProject
-      }, h(IconPlusOutline16, { size: 16 }))
+      }, h(IconPlusOutlineRegular, { size: 16 }))
     ),
     sectionBody("projects", () => projectRows.length === 0 ? h("div", { className: "loom-empty-section" }, t("noProjects")) : projectRows.map((row) => h(LoomGroup, {
       key: row.key,
@@ -1149,16 +1435,16 @@ function LoomSidebar({
       onRename: onRenameSession,
       onFork: onForkSession,
       onArchive: onArchiveSession,
-      currentId: sessionState?.current,
+      currentId: derived.highlighted,
       t,
       // One ellipsis, matching the shipped row affordance. The preflight lives
       // here because it is a verb on a project, not a place to navigate to.
       menu: {
         label: t("projectActions"),
         items: [
-          { id: "preflight", label: t("preflight"), icon: h(IconListPenOutline16, null) },
-          { id: "edit", label: t("edit"), icon: h(IconEditOutline16, null) },
-          { id: "delete", label: t("delete"), icon: h(IconTrashOutline16, null), danger: true }
+          { id: "preflight", label: t("preflight"), icon: h(IconListPenOutlineRegular, null) },
+          { id: "edit", label: t("edit"), icon: h(IconEditOutlineRegular, null) },
+          { id: "delete", label: t("delete"), icon: h(IconTrashOutlineRegular, null), danger: true }
         ],
         onSelect: (id) => {
           if (id === "preflight") onPreflightProject(row.project);
@@ -1177,7 +1463,7 @@ function LoomSidebar({
         title: t("newWorkspace"),
         "aria-label": t("newWorkspace"),
         onClick: onNewWorkspace
-      }, h(IconPlusOutline16, { size: 16 }))
+      }, h(IconPlusOutlineRegular, { size: 16 }))
     ),
     sectionBody("workspaces", () => workspaceRows.length === 0 ? h("div", { className: "loom-empty-section" }, t("noWorkspaces")) : workspaceRows.map(group)),
     sectionHead("chats", t("sectionChats"), chatSessions.length),
@@ -1187,7 +1473,7 @@ function LoomSidebar({
       chatSessions.map((summary) => h(SessionRow, {
         key: summary.id,
         summary,
-        current: summary.id === sessionState?.current,
+        current: summary.id === derived.highlighted,
         onClick: () => onOpenSession(summary.id),
         onRename: onRenameSession,
         onFork: onForkSession,
@@ -1198,9 +1484,10 @@ function LoomSidebar({
   );
 }
 function LoomSidebarHost({ bridge, ctx }) {
-  function LoomSidebarSeated({ useWorkspaces, useSessions, bridge: bridge2, ctx: ctx2, t }) {
+  function LoomSidebarSeated({ useWorkspaces, useSessions, usePanelInfo, bridge: bridge2, ctx: ctx2, t }) {
     const snapshot = useWorkspaces((state) => state);
     const sessionState = useSessions((state) => state);
+    const [panelActive, setPanelActive] = React.useState(false);
     const [manifest, setManifest] = React.useState(void 0);
     const [error, setError] = React.useState("");
     const [editing, setEditing] = React.useState(null);
@@ -1230,11 +1517,13 @@ function LoomSidebarHost({ bridge, ctx }) {
     return h(
       React.Fragment,
       null,
+      usePanelInfo !== void 0 && h(PanelSeatProbe, { usePanelInfo, onChange: setPanelActive }),
       error.length > 0 && h("div", { className: "loom-empty-section loom-warn" }, error),
       h(LoomSidebar, {
         projects,
         snapshot,
         sessionState,
+        panelActive,
         t,
         // Open through the navigation face, NOT `ctx.sessions.open` directly.
         //
@@ -1348,11 +1637,15 @@ function LoomSidebarHost({ bridge, ctx }) {
     );
   }
   return function LoomSidebarBound(props) {
-    const { useWorkspaces, useSessions, t: seatT } = props ?? {};
+    const { useWorkspaces, useSessions, usePanelInfo, t: seatT } = props ?? {};
     if (typeof useWorkspaces !== "function" || typeof useSessions !== "function") return null;
     return h(LoomSidebarSeated, {
       useWorkspaces,
       useSessions,
+      // Undefined when absent, never a substitute hook: the substitute used to
+      // live here and its hook count differed from the real seat's, so a seat
+      // that appeared later reshaped the caller's hook list and crashed it.
+      usePanelInfo: typeof usePanelInfo === "function" ? usePanelInfo : void 0,
       bridge,
       ctx,
       // The panel owns its dictionaries, so a missing seat still translates.

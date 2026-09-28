@@ -6,6 +6,7 @@ const {
   createEmptyManifest,
   defaultWorkspaceFor,
   findProject,
+  mergeMembers,
   migrateFromV1,
   normalizeManifest,
   projectsContaining,
@@ -192,3 +193,95 @@ test('createEmptyManifest is empty and versioned', () => {
   assert.equal(empty.schemaVersion, SCHEMA_VERSION);
   assert.deepEqual(empty.projects, []);
 });
+
+/*
+ * Editing membership must not rewrite anything else.
+ *
+ * Both properties below were broken by the editor deriving its member list from
+ * the live workspace registry and hard-coding `role: 'writable'`: saving a
+ * project silently promoted every `readonly` folder and deleted any member whose
+ * folder was merely offline — contradicting this module's own promise that
+ * unresolvable members are RETAINED and reported as `missing`, never pruned.
+ */
+test('editing membership keeps each retained member\'s role', () => {
+  const previous = [
+    { workspaceId: 'ws-a', role: 'readonly' },
+    { workspaceId: 'ws-b', role: 'writable' },
+  ];
+
+  const members = mergeMembers(previous, ['ws-a', 'ws-b']);
+
+  assert.deepEqual(members, previous, 'the role is the reason the folder was added; an edit must not change it');
+});
+
+test('editing membership keeps a member the registry cannot currently resolve', () => {
+  // 'ws-gone' is absent from the editor's checkbox list because it cannot be
+  // resolved — that must NOT be read as "the user unchecked it".
+  const members = mergeMembers(
+    [{ workspaceId: 'ws-gone', role: 'readonly' }, { workspaceId: 'ws-live', role: 'writable' }],
+    ['ws-gone', 'ws-live'],
+  );
+
+  assert.deepEqual(members.map(m => m.workspaceId), ['ws-gone', 'ws-live']);
+  assert.equal(members[0].role, 'readonly');
+});
+
+test('a member the user actually unchecks is removed', () => {
+  const members = mergeMembers(
+    [{ workspaceId: 'ws-keep', role: 'writable' }, { workspaceId: 'ws-drop', role: 'writable' }],
+    ['ws-keep'],
+  );
+
+  assert.deepEqual(members.map(m => m.workspaceId), ['ws-keep'],
+    'retention protects unresolvable members, not a deliberate removal');
+});
+
+test('editing membership keeps a member\'s note and de-duplicates', () => {
+  const members = mergeMembers(
+    [{ workspaceId: 'ws-a', role: 'readonly', note: 'schema source' }],
+    ['ws-a', 'ws-a', 'ws-new'],
+  );
+
+  assert.deepEqual(members, [
+    { workspaceId: 'ws-a', role: 'readonly', note: 'schema source' },
+    { workspaceId: 'ws-new', role: 'writable' },
+  ]);
+});
+
+test('a newly added member is writable, and order follows the editor', () => {
+  const members = mergeMembers([], ['ws-z', 'ws-a']);
+
+  assert.deepEqual(members, [
+    { workspaceId: 'ws-z', role: 'writable' },
+    { workspaceId: 'ws-a', role: 'writable' },
+  ]);
+});
+
+test('editing membership tolerates a missing or malformed previous list', () => {
+  assert.deepEqual(mergeMembers(undefined, ['ws-a']), [{ workspaceId: 'ws-a', role: 'writable' }]);
+  assert.deepEqual(mergeMembers([null, 'ws-a', { role: 'readonly' }], ['ws-a']),
+    [{ workspaceId: 'ws-a', role: 'writable' }],
+    'a bare id normalizes to writable and an id-less entry is dropped');
+});
+
+test('the edited members survive a round trip through the manifest rules', () => {
+  const previous = [
+    { workspaceId: 'ws-a', role: 'readonly' },
+    { workspaceId: 'ws-gone', role: 'writable' },
+  ];
+  const members = mergeMembers(previous, ['ws-a', 'ws-gone']);
+
+  // Reading back with only ws-a resolvable must flag ws-gone as missing and
+  // still keep it — the property the editor used to violate.
+  const manifest = normalizeManifest(
+    { schemaVersion: SCHEMA_VERSION, projects: [{ id: 'p1', title: 'P', members }] },
+    { knownWorkspaceIds: ['ws-a'] },
+  );
+
+  const read = manifest.projects[0].members;
+  assert.deepEqual(read.map(m => m.workspaceId), ['ws-a', 'ws-gone']);
+  assert.equal(read[0].role, 'readonly');
+  assert.equal(read[0].missing, undefined);
+  assert.equal(read[1].missing, true, 'the unresolvable member is reported, not dropped');
+});
+

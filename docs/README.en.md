@@ -173,8 +173,10 @@ Loom takes over the sidebar's browse area and splits it into three sections. **A
 | Section | Which sessions it takes |
 |---|---|
 | **Projects** | Sessions under a project's member folders (deduplicated when several members match the same session) |
-| **Workspaces** | Sessions of workspaces not claimed by any project |
+| **Workspaces** | **Every registered workspace** is listed; one claimed by a project names the claiming project, and its sessions appear under that project instead of being repeated here |
 | **Chats** | Sessions whose cwd matches no *registered* workspace |
+
+**A claimed workspace does not disappear.** A folder may belong to several projects at once, so the Workspaces section lists every registered workspace; one that belongs to a project shows that project's name beside it (as in `ws-a` beside `example-project`, with "Claimed by: example-project" on hover) instead of vanishing from the list — vanishing is what made a folder look like it could not be bound to anything else. Sessions are still listed once: a claimed workspace's sessions appear under the project.
 
 ### Why "Chats" is not an empty section
 

@@ -3,6 +3,31 @@
 本项目的版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 清单格式（`$DSH_HOME/projects/manifest.json` 的 `schemaVersion`）与包版本号是**两条独立的轴**：后者可以升，前者只在清单结构真的变化时才升。
 
+## [0.2.1] - 2026-09-28
+
+适配 DSH 0.1.7 的破坏性漂移。三个缺陷有一个共同特征：**都不报错**——注册日志显示 `ok: true`，测试全绿，但功能静默失效。因此本版同时补上了能真实失败的回归测试。
+
+### 修复
+
+- **图标族改名导致侧边栏整块被顶回原生**：DSH 的 `4937343a5e feat(web): unify the client visual language` 把图标族从「尺寸后缀」改成「字重后缀」（`IconPlusOutline16` → `IconPlusOutlineRegular`）。解构一个已不存在的导出**不会报错**，只得到 `undefined`，于是首次渲染调用 `React.createElement(undefined)` 抛错 → 槽位条目被 abdicate → 系统自带的工作区浏览器顶回来，看起来像插件没装。现已改用字重后缀名，并新增 `test/icon-contract.test.cjs`：**把源码里的每个名字与宿主真实导出表逐一比对**，而不是对着手写 stub。
+- **当前会话永远解析不到，空会话（含"新建会话"占位行）被整批过滤**：`SessionListState` **从来没有** `current` 字段，`sessionState.current` 恒为 `undefined`。现按 DSH 自身规则推导——`retainedBy.mainView > 0`（`ui-workspace/src/client/tree.ts` 的 `mainSessionId`）。取值经 `usePanelInfo` 接入，但**面板守卫只作用于"高亮"，不作用于"可见性"**：宿主在 `tree.ts:340` 用**未加守卫**的 `mainSessionId` 决定 blank 行是否进树，只在 `WorkspaceBrowser.tsx:294-296` 的 `currentId` 上加守卫。因此 `deriveSections` 分别返回 `current`（决定可见性）与 `highlighted`（决定高亮）——把二者合并会在主面板打开时删掉"新建会话"行，而那一行宿主是保留的。
+- **编辑项目会破坏清单语义**：`ProjectEditor.save()` 一边把 `role` 硬编码成 `'writable'`（每次编辑把 `readonly` 成员静默改成可写），一边用宿主注册表过滤成员（解析不到的成员**一保存就被剪掉**），直接违背 `src/core/manifest.cjs` 头部承诺的"无法解析的成员一律保留并标记 `missing`，永不剪除"。现改为走核心的 `mergeMembers()`：保留既有成员的 `role` 与 `note`，保留解析不到的成员，只移除用户显式取消勾选的。编辑器成员列表也改为 `project.members ∪ 注册表` 的并集，失联成员因此**可见、可取消**，角色则只读展示。
+- **可选 seat 的出现/消失会让宿主组件崩渲染**：`usePanelInfo` 是**可选**座位，而座位本身是一个 hook。若在侧边栏里直接调用它、缺失时换用一个 hook 数量不同的替代品，则座位一旦出现或消失，React 会因 hook 顺序变化而抛错（实测：`useState` → `useRef`，`React has detected a change in the order of Hooks called by LoomSidebarSeated`）。触发路径真实存在——框架的 `rebuildRootBinding()` 在任何 `provideRoot()` 注册或释放时重渲染整棵 slot 树，layout 插件的 HMR 重载正是如此。渲染抛错会 **abdicate 整个槽位条目**，与图标改名是同一失效模式。现把座位放进独立的子组件 `PanelSeatProbe`，座位的 hook 归该子组件所有：座位出现/消失变成该子组件的挂载/卸载，宿主组件的 hook 列表恒定。
+
+### 变更
+
+- **「工作区」段改为列出全部已登记工作区**。此前只列"未被任何项目认领的"工作区，于是文件夹一旦被项目关联就从该段消失——看起来像"不能再绑到其他项目"，而这个数据模型恰恰是多对多的。现在被认领的行**留在原地并标出认领它的项目名**（`已被项目认领 · <项目>`），其会话仍只在项目下出现、此处不重复。
+- 「工作区」段为空时的文案据此改为「没有工作区」（原为「没有未归入项目的工作区」）；被认领工作区展开时若无可列会话，提示为「会话列在认领它的项目下，此处不重复」，而不是"还没有会话"——后者对用户的数据是**假话**。
+
+### 测试
+
+- `test/sections.test.cjs`：去掉原先靠手工写 `sessionState.current` 掩盖缺陷的写法（新增用例专门断言**这个字段会被忽略**），并新增可见性/高亮分离、跨段不重复、多项目认领等用例。
+- `test/manifest.test.cjs`：新增 `mergeMembers` 的 7 个用例（保留 role / 保留未解析成员 / 显式取消仍生效 / 保留 note / 去重 / 顺序 / 读回后标 `missing`）。
+- `test/icon-contract.test.cjs`（新增）：把源码里出现的每个 primitives 名字与**宿主真实导出表**逐一比对；取不到检出则 skip，但"检出在、产物找不到"会显式失败，避免整套检查静默跳过。
+- `test/client-render.test.cjs`（新增）：渲染**已提交的 dist**。其中三条用真实 DOM + 点击**实际调用 `ProjectEditor.save()`** 并断言 `onSave` 收到的 `members`——这是 R3 唯一的端到端证明（只测核心 `mergeMembers` 无法发现调用点被改坏）。
+- `test/client-mount.test.cjs`（新增）：用真实 React 跨多次渲染驱动**宿主组件**，断言座位出现/消失不改变 hook 顺序、且面板打开只清高亮不删行。这两条都无法用单次静态渲染发现。
+- 上述新用例均按"**改回旧代码就会失败**"实测：对修复前的源码运行共失败 35 条；并用变异测试逐条确认关键断言会因对应回归而失败（参数颠倒 / 剪除缺陷回归 / role 硬编码 / 守卫越界 / 替代 hook 改回）。
+
 ## [0.2.0] - 2026-09-23
 
 ### 新增

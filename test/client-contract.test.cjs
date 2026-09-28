@@ -190,3 +190,94 @@ test('the design system stays external so the shell instance is shared', () => {
     'build.mjs must keep the platform module external rather than bundling a second copy');
   assert.match(buildScript, /react-dom/, 'react and react-dom are platform modules too');
 });
+
+/*
+ * The adaptation to DSH 0.1.7. Each of these guards a bug that shipped and was
+ * INVISIBLE: a rename that yields `undefined` (so the first render throws and the
+ * slot abdicates), and a store field that never existed (so a whole class of
+ * rows was filtered out while every test stayed green).
+ */
+test('the client reads the current session from retention, not from a store field', () => {
+  // `SessionListState` has no `current` field in 0.1.6-alpha.2 or 0.1.7-rc.1, so
+  // this read was permanently `undefined` and every blank session — including the
+  // provisional New Session row — was filtered out of all three sections.
+  assert.doesNotMatch(code, /sessionState\s*\??\.\s*current/,
+    'the session list store has no `current` field; derive it from retainedBy.mainView');
+  assert.match(code, /derived\.highlighted/, 'rows read the value that decides the HIGHLIGHT');
+});
+
+test('the highlight and the row set come from two different derived values', () => {
+  // The host separates them: `tree.ts:340` decides VISIBILITY from the unguarded
+  // `mainSessionId`, while `WorkspaceBrowser.tsx:294-296` decides the HIGHLIGHT
+  // from the guarded value. Routing the guarded value into visibility deletes
+  // the New Session row whenever a panel opens — a row the host keeps.
+  assert.match(code, /usePanelInfo/, 'the panel-selection hook is the highlight guard\'s source');
+  assert.match(code, /activePanelId/, 'the guard tests for a selected main panel');
+  assert.match(code, /PanelSeatProbe/, 'the seat\'s hooks belong to a child, not to the sidebar');
+  assert.doesNotMatch(code, /currentId:\s*derived\.current|summary\.id === derived\.current/,
+    'a highlight must never be driven by the visibility value');
+});
+
+test('the optional seat never changes the host component\'s hook order', () => {
+  // The seat IS a hook. Calling it from the sidebar made the sidebar's hook list
+  // depend on the seat's presence; the framework re-renders the whole slot tree
+  // whenever a root source is registered or released, so a seat that appeared
+  // later reshaped the list and React threw. The fix puts the seat's hooks in a
+  // CHILD, whose mount/unmount is the seat's own lifetime.
+  assert.match(code, /function PanelSeatProbe\s*\(/, 'the seat is called from a dedicated child');
+  assert.match(code, /typeof usePanelInfo === 'function'/, 'the optional seat is checked before use');
+  assert.doesNotMatch(code, /function useNoPanelInfo\s*\(/,
+    'a substitute hook with a different hook count is what caused the crash');
+});
+
+test('the project editor rebuilds members through the manifest rule', () => {
+  // Deriving `members` from the live workspace registry and hard-coding
+  // `role: 'writable'` did two things at once on every save: it promoted every
+  // readonly folder, and it deleted any member the registry could not resolve —
+  // contradicting the manifest's promise that unresolved members are retained.
+  assert.match(code, /mergeMembers\s*\(/, 'the editor must use the shared membership rule');
+  assert.doesNotMatch(code, /workspaces\.filter\([\s\S]{0,80}role:\s*'writable'/,
+    'a role written while filtering the live registry is how readonly members were silently promoted, '
+    + 'and how members the registry could not resolve were pruned on save');
+});
+
+test('a claimed workspace is annotated rather than hidden', () => {
+  // Filtering claimed folders out of 工作区 made a folder look exclusive to its
+  // project — and look like it had vanished the moment it joined one.
+  assert.match(code, /claimedBy/, 'a claimed folder names the projects claiming it');
+  assert.match(code, /loom-claimed/, 'and says so in the row itself');
+});
+
+test('the two dictionaries carry exactly the same keys', () => {
+  // A key present in one table and missing from the other renders as the RAW KEY
+  // STRING in that locale — the panel silently shows `claimedElsewhere` to a
+  // user. Nothing else in the suite compares the tables, so a key added to `zh`
+  // alone (or removed from `en`) would ship unnoticed.
+  const table = /const dictionaries = \{([\s\S]*?)\n\};/.exec(code);
+  assert.ok(table, 'the dictionaries must be found');
+  const body = table[1];
+  const zhPart = body.slice(body.indexOf('zh: {'), body.indexOf('en: {'));
+  const enPart = body.slice(body.indexOf('en: {'));
+  const keysOf = text => new Set([...text.matchAll(/^\s{4}([A-Za-z][A-Za-z0-9_]*):/gm)].map(m => m[1]));
+
+  const zh = keysOf(zhPart);
+  const en = keysOf(enPart);
+  assert.ok(zh.size >= 50, `expected the full dictionary, found ${zh.size} keys`);
+
+  const onlyZh = [...zh].filter(key => !en.has(key));
+  const onlyEn = [...en].filter(key => !zh.has(key));
+  assert.deepEqual(onlyZh, [], `these keys exist only in zh and would render raw in en: ${onlyZh.join(', ')}`);
+  assert.deepEqual(onlyEn, [], `these keys exist only in en and would render raw in zh: ${onlyEn.join(', ')}`);
+});
+
+test('every key the client asks a translator for exists', () => {
+  // Covers the other direction: a `t('typo')` call has no entry in EITHER table,
+  // so it renders as the literal key.
+  const table = /const dictionaries = \{([\s\S]*?)\n\};/.exec(code)[1];
+  const zhPart = table.slice(0, table.indexOf('en: {'));
+  const known = new Set([...zhPart.matchAll(/^\s{4}([A-Za-z][A-Za-z0-9_]*):/gm)].map(m => m[1]));
+
+  const asked = new Set([...code.matchAll(/\bt\(\s*'([A-Za-z][A-Za-z0-9_]*)'/g)].map(m => m[1]));
+  const missing = [...asked].filter(key => !known.has(key));
+  assert.deepEqual(missing, [], `these translation keys do not exist: ${missing.join(', ')}`);
+});
