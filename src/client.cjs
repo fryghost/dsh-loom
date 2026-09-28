@@ -33,6 +33,7 @@ const React = require('react');
 const {
   Button, Tag, StateDot, Modal, Input, Menu,
   IconPlusOutlineRegular, IconChevronDownOutlineRegular,
+  IconSearchOutlineRegular, IconCloseOutlineRegular,
   IconEllipsisOutlineRegular, IconEditOutlineRegular, IconTrashOutlineRegular,
   IconBranchOutlineRegular, IconArchiveOutlineRegular, IconListPenOutlineRegular,
 } = require('@deepseek-ai/dsh-client-ui-primitives');
@@ -105,6 +106,7 @@ const dictionaries = {
     sectionChats: '聊天',
     newChat: '新对话',
     searchPlaceholder: '搜索会话',
+    clearSearch: '清除搜索',
     showMore: '展开其余 {count} 个会话',
     showLess: '收起',
     untitled: '未命名会话',
@@ -191,6 +193,7 @@ const dictionaries = {
     sectionChats: 'Chats',
     newChat: 'New chat',
     searchPlaceholder: 'Search sessions',
+    clearSearch: 'Clear search',
     showMore: 'Show {count} more',
     showLess: 'Show less',
     untitled: 'Untitled session',
@@ -386,7 +389,54 @@ const STYLES = `
   color: var(--dsw-alias-label-primary);
   font-size: 14px; line-height: 20px;
 }
-.loom-search { padding: 0 0 8px; }
+/* The sidebar's search field, matching the shipped browser's own control
+   (ui-workspace's WorkspaceBrowser.module.css) rather than the Input atom.
+
+   The atom is built for DIALOG FORMS: 32px tall, a filled bg-layer-1 surface,
+   a 12px radius and 14px text. Dropping that into the sidebar made it the only
+   opaque box in a column whose entire language is "transparent at rest, filled
+   on hover" — every row, every group header. It read as a foreign, heavier
+   object than the tree it filters.
+
+   The shipped search is 28px, radius-sm, transparent, 13px/18px, with a 14px
+   leading glyph and a clear button. Same numbers here.
+   (No backticks anywhere in this block: it is itself a template literal, and
+   one would end it early — which has now happened five times.) */
+.loom-search {
+  flex: none;
+  display: flex; align-items: center; gap: 0;
+  box-sizing: border-box;
+  width: 100%; height: 28px;
+  margin: 0 0 8px; padding: 0 4px 0 0;
+  border: 0.5px solid transparent;
+  border-radius: var(--dsw-radius-sm);
+  background: transparent;
+  color: var(--dsw-alias-label-secondary);
+  transition: border-color 150ms var(--ds-ease-in-out), background-color 150ms var(--ds-ease-in-out);
+}
+/* The border appears only on approach, so the resting state stays flat. */
+.loom-search:hover,
+.loom-search:focus-within { border-color: var(--dsw-alias-border-l4); }
+.loom-search-icon {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 28px; height: 28px;
+  color: var(--dsw-alias-label-tertiary);
+}
+.loom-search-input {
+  flex: 1; width: 0; min-width: 0;
+  border: none; outline: none; background: transparent;
+  font-size: 13px; line-height: 18px;
+  color: var(--dsw-alias-label-primary);
+}
+.loom-search-input::placeholder { color: var(--dsw-alias-label-tertiary); }
+.loom-search-clear {
+  flex: none; display: inline-flex; align-items: center; justify-content: center;
+  width: 24px; height: 24px; padding: 0;
+  border: none; border-radius: var(--dsw-radius-sm);
+  background: transparent; cursor: pointer;
+  color: var(--dsw-alias-label-secondary);
+}
+.loom-search-clear:hover { background: var(--dsw-alias-interactive-bg-hover); }
 
 /* The three rulers of this tree, all measured from the sidebar's own edge:
      the section twisty   sits at 4 + 2             =  6px
@@ -404,12 +454,20 @@ const STYLES = `
    invisible; 12px is the caption size, and 14px every row below it. */
 .loom-section-head {
   display: flex; align-items: center; gap: 2px;
-  margin-top: 16px; padding: 6px 0 0;
+  margin-top: 16px; padding: 6px 0 2px;
   border-top: 0.5px solid var(--dsw-alias-border-l3);
 }
-/* The first band opens the panel; a rule above it would only double the edge
-   of the search field. */
-.loom-section-head:first-of-type { margin-top: 2px; padding-top: 0; border-top: none; }
+/* A band is a HEADING, so its space belongs below the rule, not above it. The
+   old split was 22px above (16 margin + 6 padding) and 0px below, which made
+   every band read as a footer of the group above it instead of the heading of
+   the group beneath — the clearest spacing fault in this panel.
+
+   The first band opens the panel directly under the search field, so it takes
+   neither the rule nor the full gap. Selected by an explicit class rather than
+   :first-of-type, which NEVER MATCHED: the search field is also a div, so the
+   first .loom-section-head is not the first div of its type, and the rule that
+   was supposed to suppress this one band's rule fired on all three. */
+.loom-section-head-first { margin-top: 2px; padding-top: 0; border-top: none; }
 .loom-section-title {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 6px;
@@ -1226,9 +1284,11 @@ function LoomSidebar({
   const [hiddenSections, setHiddenSections] = React.useState(() => new Set());
   const toggleSection = toggle(setHiddenSections);
 
-  const sectionHead = (id, label, count, action) => {
+  const sectionHead = (id, label, count, action, first = false) => {
     const open = !hiddenSections.has(id);
-    return h('div', { className: 'loom-section-head' },
+    return h('div', {
+      className: first ? 'loom-section-head loom-section-head-first' : 'loom-section-head',
+    },
       h('button', {
         type: 'button',
         className: 'loom-section-title',
@@ -1250,13 +1310,26 @@ function LoomSidebar({
 
   return h('div', { className: 'loom-sidebar' },
     h('div', { className: 'loom-search' },
-      h(Input, {
-        className: 'loom-input',
+      h('span', { className: 'loom-search-icon' }, h(IconSearchOutlineRegular, { size: 14 })),
+      h('input', {
+        type: 'search',
+        className: 'loom-search-input',
         value: query,
         placeholder: t('searchPlaceholder'),
         'aria-label': t('searchPlaceholder'),
         onChange: event => setQuery(event.target.value),
+        // Escape clears rather than leaving the field with stale text, matching
+        // how the shipped search behaves.
+        onKeyDown: event => { if (event.key === 'Escape') setQuery(''); },
       }),
+      // The clear affordance only exists once there is something to clear, so
+      // the resting field stays as quiet as a plain label.
+      query.length > 0 && h('button', {
+        type: 'button',
+        className: 'loom-search-clear',
+        'aria-label': t('clearSearch'),
+        onClick: () => setQuery(''),
+      }, h(IconCloseOutlineRegular, { size: 12 })),
     ),
 
     nothing && h('div', { className: 'loom-empty-section' }, t('noMatches')),
@@ -1265,7 +1338,7 @@ function LoomSidebar({
       h('button', {
         type: 'button', className: 'loom-icon-btn',
         title: t('newProject'), 'aria-label': t('newProject'), onClick: onNewProject,
-      }, h(IconPlusOutlineRegular, { size: 16 }))),
+      }, h(IconPlusOutlineRegular, { size: 16 })), true),
 
     sectionBody('projects', () => (projectRows.length === 0
       ? h('div', { className: 'loom-empty-section' }, t('noProjects'))

@@ -63,8 +63,37 @@ const artifact = [
   join(CHECKOUT, 'packages', 'client', 'ui-primitives', 'lib', 'index.js'),
 ].find(candidate => existsSync(candidate));
 
+/**
+ * A require rooted where react, react-dom AND happy-dom all resolve.
+ *
+ * A directory where `react` resolves does not promise that react's SIBLINGS do:
+ * findPackage can return a junction into the checkout's nested node_modules,
+ * from which happy-dom walks up a tree that does not contain it. Each package
+ * therefore gets its own root, and the repo's node_modules is the fallback
+ * anchor for a devDependency the project installed directly.
+ */
+function requireRootFor(names) {
+  const candidates = [];
+  for (const name of names) {
+    const dir = findPackage(name);
+    if (dir !== undefined) candidates.push(createRequire(join(dir, 'package.json')));
+  }
+  candidates.push(createRequire(join(ROOT, 'package.json')));
+  for (const req of candidates) {
+    try {
+      for (const name of names) req.resolve(name);
+      return req;
+    } catch {
+      // Try the next anchor.
+    }
+  }
+  return undefined;
+}
+
+const domReq = requireRootFor(['react', 'react-dom/client', 'happy-dom']);
+
 const ready = reactDir !== undefined && reactDomDir !== undefined
-  && happyDomDir !== undefined && artifact !== undefined;
+  && domReq !== undefined && artifact !== undefined;
 
 /**
  * A DOM plus the real React pair, for tests that span multiple renders.
@@ -76,7 +105,7 @@ const ready = reactDir !== undefined && reactDomDir !== undefined
 let dom;
 function loadDom() {
   if (dom !== undefined) return dom;
-  const req = createRequire(join(reactDir, 'index.js'));
+  const req = domReq;
   const { Window } = req('happy-dom');
   const window = new Window({ url: 'http://localhost/' });
   globalThis.window = window;

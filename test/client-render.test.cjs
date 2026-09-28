@@ -74,8 +74,42 @@ const reactDomDir = findPackage('react-dom');
 const artifact = primitivesArtifact();
 const happyDomDir = findPackage('happy-dom');
 const ready = reactDir !== undefined && reactDomDir !== undefined && artifact !== undefined;
+
+/**
+ * A require rooted at a package that can actually resolve `names`.
+ *
+ * `findPackage('react')` returns a directory where REACT resolves — it does not
+ * promise that react's SIBLINGS do. On this machine it returns a junction into
+ * the checkout's nested node_modules, and requiring `happy-dom` from there walks
+ * up a tree that has no happy-dom and no .pnpm store, so the interaction tests
+ * died with MODULE_NOT_FOUND while happy-dom sat resolvable from the repo root.
+ *
+ * So each package gets its own root, and only the roots that resolve everything
+ * asked of them are eligible.
+ */
+function requireRootFor(names) {
+  const candidates = [];
+  for (const name of names) {
+    const dir = findPackage(name);
+    if (dir !== undefined) candidates.push(createRequire(join(dir, 'package.json')));
+  }
+  // The repo's own node_modules is the fallback anchor: it resolves whatever the
+  // project installed directly, including a devDependency-only DOM library.
+  candidates.push(createRequire(join(ROOT, 'package.json')));
+  for (const req of candidates) {
+    try {
+      for (const name of names) req.resolve(name);
+      return req;
+    } catch {
+      // Try the next anchor.
+    }
+  }
+  return undefined;
+}
+
+const domReq = requireRootFor(['react', 'react-dom/client', 'happy-dom']);
 // Interaction tests need a real DOM; a static render does not.
-const domReady = ready && happyDomDir !== undefined;
+const domReady = ready && domReq !== undefined;
 
 /** Load the real React pair once, the way a Node consumer would. */
 function loadReact() {
@@ -92,7 +126,7 @@ function loadReact() {
  */
 let domGlobalsInstalled = false;
 function loadDom() {
-  const req = createRequire(join(reactDir, 'index.js'));
+  const req = domReq;
   if (!domGlobalsInstalled) {
     const { Window } = req('happy-dom');
     const window = new Window({ url: 'http://localhost/' });
