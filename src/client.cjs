@@ -1648,12 +1648,21 @@ function apply(ctx) {
 
   const bridge = createBridge(ctx);
 
-  /** Read a slot fact without letting a missing method break the diagnostic. */
+  /**
+   * One line saying whether the client half can do its job at all.
+   *
+   * `probe` reads a slot fact without letting a missing method break the
+   * diagnostic: the slot service's surface is not a stable contract (0.2 dropped
+   * `declarationEpoch` from the exposed object, which turned this report into a
+   * wall of "is not a function"), and a diagnostic that throws is worse than no
+   * diagnostic. Callers must still be told, so the failure is reported as a
+   * value rather than escalated.
+   */
   const probe = read => {
     try {
       return read();
     } catch (error) {
-      return `error: ${error instanceof Error ? error.message : String(error)}`;
+      return `unavailable: ${error instanceof Error ? error.message : String(error)}`;
     }
   };
 
@@ -1663,12 +1672,10 @@ function apply(ctx) {
     hasSlots: ctx.slots !== undefined,
     hasInject: typeof ctx.slots?.inject === 'function',
     hasRegister: typeof ctx.slots?.register === 'function',
-    // Timing matters: `slots.inject` returns early while a slot is undeclared,
-    // so a spec that is missing here means the declaration lands later.
-    mainSpec: probe(() => ctx.slots.spec('main') !== undefined),
-    mainEpoch: probe(() => ctx.slots.declarationEpoch('main')),
-    panellistSpec: probe(() => ctx.slots.spec('sidebar.panellist') !== undefined),
-    panellistEpoch: probe(() => ctx.slots.declarationEpoch('sidebar.panellist')),
+    // A slot that is not yet DECLARED makes `slots.inject` return early, so this
+    // records whether the declaration had already landed when Loom applied.
+    sidebarSpec: probe(() => ctx.slots.spec('sidebar') !== undefined),
+    workspacesSpec: probe(() => ctx.slots.spec('sidebar.workspaces') !== undefined),
   });
 
   // Nothing is registered in `main` or `sidebar.panellist`, deliberately.

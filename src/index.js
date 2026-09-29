@@ -4,7 +4,7 @@
  * Responsibilities:
  *   1. persist the project manifest under `$DSH_HOME/projects/manifest.json`;
  *   2. expose manifest reads/writes plus a context-plan preflight over the
- *      loopback RPC channel the client already uses;
+ *      RPC channel the client already uses;
  *   3. register the skill provider that lets sibling folders contribute.
  *
  * Optional services are read with `ctx.get()` rather than declared in `inject`,
@@ -30,7 +30,13 @@ const { parseSkillMetadata } = frontmatterCore;
 const name = 'dsh-loom';
 const inject = ['connection'];
 
-/** Loopback RPC channel; the client's `connection.rpc.call` targets this. */
+/**
+ * The client's RPC channel; `connection.rpc.call` targets this.
+ *
+ * Called "the bridge" throughout this file. It is not described as
+ * "loopback-only" any more: since 0.2 the carrier admits every request as the
+ * operator Peer, and this channel no longer declares an authority of its own.
+ */
 const BRIDGE_CHANNEL = '/dsh-loom';
 
 function resolveDshHome(explicit) {
@@ -240,9 +246,24 @@ function createRpcHandler(ctx, dshHome) {
 function apply(ctx, config = {}) {
   const dshHome = resolveDshHome(config.dshHome);
 
-  // The client reaches the host over the same loopback RPC seam the client
-  // half already injects; only loopback callers may read or write the manifest.
-  ctx.connection.rpc.handle(BRIDGE_CHANNEL, createRpcHandler(ctx, dshHome), { authority: 'loopback' });
+  /**
+   * Register the client bridge.
+   *
+   * TWO arguments, and that is not cosmetic. DSH 0.2 removed the third
+   * `{ authority }` parameter from `HostConnectionRpc.handle` — the commit is
+   * `refactor(connection): admit every request as the single operator Peer`,
+   * which deleted `ConnectionRpcAuthority` (including `'loopback'`) and made the
+   * carrier admit every request as the operator. `rpc-host.ts` now reads
+   * `handle: (channel, handler) => this.register(owner, channel, handler)`, so a
+   * third argument is silently discarded rather than rejected.
+   *
+   * Passing it anyway is what produced `HTTP 405` on every call. The channel
+   * never mounted, so `POST /dsh-loom/getManifest` fell through to the static
+   * file route, whose fallback answers non-GET/HEAD with 405
+   * (`host/frontend-static`: "Non-GET/HEAD without a matching named route is
+   * 405"). Access control now lives in the carrier, not in this call.
+   */
+  ctx.connection.rpc.handle(BRIDGE_CHANNEL, createRpcHandler(ctx, dshHome));
 
   // Register the sibling-folder skill provider. `inject` keeps Loom loadable
   // when no skills registry exists in this composition.

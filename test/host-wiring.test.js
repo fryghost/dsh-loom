@@ -31,7 +31,27 @@ function fakeContext(options = {}) {
     effect: disposer => { disposers.push(disposer); },
     connection: {
       rpc: {
-        handle: (channel, handler) => { handlers.set(channel, handler); },
+        // Arity is CHECKED, not ignored.
+        //
+        // DSH 0.2 removed the third `{ authority }` parameter from
+        // `HostConnectionRpc.handle`. The real implementation is
+        // `handle: (channel, handler) => this.register(owner, channel, handler)`,
+        // so a third argument is silently dropped — exactly like a fake that
+        // declares two parameters. A previous version of this fake did declare
+        // two, and therefore could never catch the bug that shipped:
+        // `apply()` passed `{ authority: 'loopback' }`, the channel never
+        // mounted, and every call answered HTTP 405 from the static-file
+        // fallback. Counting arguments is what makes this harness able to fail
+        // for the reason it exists. (A function expression, not an arrow, because
+        // arrows have no `arguments`.)
+        handle: function handle(channel, handler) {
+          if (arguments.length !== 2) {
+            throw new TypeError(
+              `connection.rpc.handle takes (channel, handler); got ${arguments.length} arguments`,
+            );
+          }
+          handlers.set(channel, handler);
+        },
       },
     },
     logger: { warn: () => {}, info: () => {} },
@@ -57,6 +77,35 @@ function fakeContext(options = {}) {
 
   return ctx;
 }
+
+test('the bridge handler accepts the 0.2 four-argument call shape', async () => {
+  // DSH 0.2's `ConnectionRpcHandler` is
+  //   (endpoint, payload, signal, peer) => Promise<{ ok, value } | { ok, error }>
+  // The extra `signal` and `peer` are not used yet, but the call must tolerate
+  // them: a handler declared with two parameters is callable with four, and this
+  // pins that it stays that way rather than acquiring a positional dependency on
+  // an argument the carrier is free to change.
+  const ctx = fakeContext({ services: {} });
+  apply(ctx, { dshHome: join(tmpdir(), 'loom-fake-home') });
+  const handler = ctx._handlers.get('/dsh-loom');
+
+  const result = await handler('getManifest', {}, new AbortController().signal, { id: 'peer' });
+  assert.equal(typeof result, 'object');
+  assert.equal(result.ok, true, 'a four-argument call must still resolve a result envelope');
+  assert.ok(result.value !== undefined, 'and carry the value the endpoint produces');
+});
+
+test('the bridge handler returns a failure envelope, not a throw', async () => {
+  // The carrier treats a thrown handler as HTTP 500 and loses the reason; every
+  // endpoint failure must come back as `{ ok: false, error }`.
+  const ctx = fakeContext({ services: {} });
+  apply(ctx, { dshHome: join(tmpdir(), 'loom-fake-home') });
+  const handler = ctx._handlers.get('/dsh-loom');
+
+  const result = await handler('no-such-endpoint', {}, undefined, undefined);
+  assert.equal(result.ok, false);
+  assert.equal(typeof result.error.message, 'string');
+});
 
 test('apply registers the RPC channel and the skill provider', () => {
   const ctx = fakeContext({ services: { skills: {} } });

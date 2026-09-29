@@ -1784,7 +1784,7 @@ function apply(ctx) {
     try {
       return read();
     } catch (error) {
-      return `error: ${error instanceof Error ? error.message : String(error)}`;
+      return `unavailable: ${error instanceof Error ? error.message : String(error)}`;
     }
   };
   report(bridge, {
@@ -1793,12 +1793,10 @@ function apply(ctx) {
     hasSlots: ctx.slots !== void 0,
     hasInject: typeof ctx.slots?.inject === "function",
     hasRegister: typeof ctx.slots?.register === "function",
-    // Timing matters: `slots.inject` returns early while a slot is undeclared,
-    // so a spec that is missing here means the declaration lands later.
-    mainSpec: probe(() => ctx.slots.spec("main") !== void 0),
-    mainEpoch: probe(() => ctx.slots.declarationEpoch("main")),
-    panellistSpec: probe(() => ctx.slots.spec("sidebar.panellist") !== void 0),
-    panellistEpoch: probe(() => ctx.slots.declarationEpoch("sidebar.panellist"))
+    // A slot that is not yet DECLARED makes `slots.inject` return early, so this
+    // records whether the declaration had already landed when Loom applied.
+    sidebarSpec: probe(() => ctx.slots.spec("sidebar") !== void 0),
+    workspacesSpec: probe(() => ctx.slots.spec("sidebar.workspaces") !== void 0)
   });
   try {
     ctx.slots.inject("sidebar.workspaces", contribute(
