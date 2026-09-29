@@ -29,7 +29,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { apply, createRpcHandler, isSameOrInside, resolveDshHome, respondToBridge } from '../src/index.js';
+import { apply, bridgeEndpoint, bridgePath, createRpcHandler, isSameOrInside, resolveDshHome, respondToBridge } from '../src/index.js';
 
 /** HTTP methods an exact Fetch route may own (`ConnectionFetchMethod`). */
 const FETCH_METHODS = new Set(['GET', 'HEAD', 'POST']);
@@ -144,12 +144,20 @@ function fakeContext(options = {}) {
   return ctx;
 }
 
-/** One `client-request` envelope, as the browser caller sends it. */
+/**
+ * One `client-request` envelope, as the browser caller sends it.
+ *
+ * `method` is the FULL endpoint name, because that is what the carrier's client
+ * puts there: it was handed `dsh-loom/getManifest` and copies it verbatim
+ * (`client/rpc.ts`: `method: endpoint`). A helper that wrote the bare name would
+ * agree with a server that compared against the bare name — and this pair
+ * shipped once and rejected every real call from the running GUI.
+ */
 function clientRequest(endpoint, payload, rpcId = 'rpc-1') {
-  return new Request(`http://127.0.0.1:3080/api/dsh-loom/${endpoint}`, {
+  return new Request(`http://127.0.0.1:3080${bridgePath(endpoint)}`, {
     method: 'POST',
     headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ type: 'client-request', rpcId, method: endpoint, payload }),
+    body: JSON.stringify({ type: 'client-request', rpcId, method: bridgeEndpoint(endpoint), payload }),
   });
 }
 
@@ -208,6 +216,39 @@ test('a route answers the client-request envelope with a server-response envelop
   }
 });
 
+test('the envelope names the endpoint it addresses, not the bare route', async () => {
+  // The exact pair that shipped broken: the client asks for
+  // `dsh-loom/getManifest` and copies that string into `method`, while the route
+  // owns the bare `getManifest`. Validating against the bare name rejected every
+  // well-formed call from the running GUI, with the manifest on disk and three
+  // projects waiting to render.
+  const ctx = fakeContext({ services: {} });
+  apply(ctx, { dshHome: join(tmpdir(), 'loom-fake-home') });
+  const route = ctx._routes.get(bridgePath('getManifest'));
+
+  const named = await route.fetch(new Request(`http://127.0.0.1:3080${bridgePath('getManifest')}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({
+      type: 'client-request',
+      rpcId: 'r1',
+      method: bridgeEndpoint('getManifest'),
+      payload: {},
+    }),
+  }));
+  assert.equal((await named.json()).result.ok, true,
+    'the full endpoint name is what the carrier\'s client sends and what this route serves');
+
+  const bare = await route.fetch(new Request(`http://127.0.0.1:3080${bridgePath('getManifest')}`, {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify({ type: 'client-request', rpcId: 'r2', method: 'getManifest', payload: {} }),
+  }));
+  const rejected = await bare.json();
+  assert.equal(rejected.result.ok, false, 'a bare route name is not an address on the shared channel');
+  assert.match(rejected.result.error.message, /does not match endpoint "dsh-loom\/getManifest"/);
+});
+
 test('a route rejects a misaddressed envelope without losing the reason', async () => {
   const ctx = fakeContext({ services: {} });
   apply(ctx, { dshHome: join(tmpdir(), 'loom-fake-home') });
@@ -256,9 +297,9 @@ test('the client-request envelope is validated the way the carrier validates it'
 
   const cases = [
     { body: [], reason: /not an object/ },
-    { body: { type: 'server-response', rpcId: 'r1', method: 'x', payload: {} }, reason: /client-request/ },
-    { body: { type: 'client-request', rpcId: 7, method: 'x', payload: {} }, reason: /rpcId is not a string/ },
-    { body: { type: 'client-request', rpcId: 'r1', method: 'y', payload: {} }, reason: /does not match endpoint/ },
+    { body: { type: 'server-response', rpcId: 'r1', method: 'dsh-loom/x', payload: {} }, reason: /client-request/ },
+    { body: { type: 'client-request', rpcId: 7, method: 'dsh-loom/x', payload: {} }, reason: /rpcId is not a string/ },
+    { body: { type: 'client-request', rpcId: 'r1', method: 'dsh-loom/y', payload: {} }, reason: /does not match endpoint/ },
   ];
   for (const { body, reason } of cases) {
     const result = await post(body);

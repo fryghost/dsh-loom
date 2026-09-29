@@ -3,6 +3,24 @@
 本项目的版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 清单格式（`$DSH_HOME/projects/manifest.json` 的 `schemaVersion`）与包版本号是**两条独立的轴**：后者可以升，前者只在清单结构真的变化时才升。
 
+## [0.2.4] - 2026-09-30
+
+修掉 0.2.3 自己带进来的回归：路由挂上了，但每一次调用都被自己的校验拒掉。
+
+### 修复
+
+- **`method "dsh-loom/getManifest" does not match endpoint "getManifest"`**：信封里的 `method` 是**完整端点名**，不是路由自己拥有的那个裸名。这是 carrier 自己的规则——它的客户端把拿到的那串原样写进 `method`（`packages/client/connection/src/client/rpc.ts`：`method: endpoint`），它的服务端拿 `endpointFromPath(channel, pathname)` 比对，而路径是 `/api/dsh-loom/getManifest`，所以那个值是带命名空间的。0.2.3 用裸名比对，于是每一次合法调用都被判成 `gateway/bad-request`。
+
+  现场症状看着像"数据没读到"而不像"调用被拒"：三段侧边栏都在，`include:loom` 已经是 `active`，「项目」段却显示**还没有项目**——而磁盘上 `$DSH_HOME/projects/manifest.json` 里明明有三个项目。原因文本会显示在段上方。
+
+### 测试
+
+- **这个 bug 是测试自己放过去的，原因必须记下来**：回归测试**手写信封**，而手写时写的正是裸名——它与错误的服务端实现互相印证。测试和实现共享同一个错误假设时，两边都绿，只有真实 GUI 是红的。
+
+  现在 `test/dsh-02-transport.test.js` 不再手写信封，而是驱动 **carrier 自己的浏览器传输**：加载真实的 `lib/client.js`（它是 `__ModuleLoader__` 注册形式、没有 ESM 导出，因此用桩 loader 接住注册再直接调用其工厂），用它的 `installConnection` 装出页面上的 `ctx.connection.rpc`，再由它构造信封、解析响应。手写假设能藏身的位置没有了。
+
+- `test/host-wiring.test.js` 新增一条反向用例：信封里写**裸名**必须被拒、写完整端点名必须成功——两个方向都钉住。把 0.2.3 的比对方式放回去，3 条用例变红（含上面那条真实传输的端到端用例）。
+
 ## [0.2.3] - 2026-09-30
 
 修掉 0.2.2 留下的**半个修复**：通道仍然是私有通道，而 DSH 0.2 里插件根本挂不上私有通道。0.2.2 去掉第三个实参只是把失败从「静默不挂载」推进到「加载时抛错」。

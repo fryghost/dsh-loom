@@ -28,7 +28,7 @@ import bridgeCore from './core/bridge.cjs';
 const { skillRootsForProject, instructionCandidatesForProject } = skillRootsCore;
 const { buildContextPlan } = contextPlanCore;
 const { parseSkillMetadata } = frontmatterCore;
-const { BRIDGE_CHANNEL, BRIDGE_ENDPOINTS, bridgePath } = bridgeCore;
+const { BRIDGE_CHANNEL, BRIDGE_ENDPOINTS, bridgeEndpoint, bridgePath } = bridgeCore;
 
 const name = 'dsh-loom';
 const inject = ['connection'];
@@ -285,14 +285,23 @@ async function respondToBridge(request, endpoint, handler) {
   }
 
   const rpcId = typeof body?.rpcId === 'string' ? body.rpcId : INVALID_REQUEST_RPC_ID;
+  // The envelope's `method` is the FULL endpoint name the caller asked for
+  // (`dsh-loom/getManifest`), not the bare endpoint this route owns. That is the
+  // carrier's own rule: its client puts the string it was handed into `method`
+  // (`client/rpc.ts`: `method: endpoint`), and its server compares it against
+  // `endpointFromPath(channel, pathname)` — which is the endpoint WITH the
+  // namespace, because the path is `/api/dsh-loom/getManifest`. Comparing
+  // against the bare name rejected every well-formed call, which is how this
+  // shipped once already.
+  const method = bridgeEndpoint(endpoint);
   const rejection = body === null || typeof body !== 'object' || Array.isArray(body)
     ? 'message is not an object'
     : body.type !== 'client-request'
       ? `type is not "client-request"`
       : typeof body.rpcId !== 'string'
         ? 'rpcId is not a string'
-        : body.method !== endpoint
-          ? `method ${JSON.stringify(body.method)} does not match endpoint ${JSON.stringify(endpoint)}`
+        : body.method !== method
+          ? `method ${JSON.stringify(body.method)} does not match endpoint ${JSON.stringify(method)}`
           : undefined;
   if (rejection !== undefined) {
     return bridgeResponse(rpcId, {
@@ -381,6 +390,7 @@ export {
   BRIDGE_CHANNEL,
   BRIDGE_ENDPOINTS,
   apply,
+  bridgeEndpoint,
   bridgePath,
   createRpcHandler,
   gatherInstructions,

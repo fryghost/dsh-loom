@@ -36,7 +36,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
 
-import { apply as loomApply, BRIDGE_ENDPOINTS, bridgePath } from '../src/index.js';
+import { apply as loomApply, BRIDGE_CHANNEL, BRIDGE_ENDPOINTS, bridgeEndpoint, bridgePath } from '../src/index.js';
 
 /**
  * Anchors the harness packages resolve from.
@@ -159,7 +159,52 @@ test('a sibling plugin cannot mount a private RPC channel on this DSH build', as
     'the documented 0.2 failure is a `without inject` lookup miss, not an HTTP error');
 });
 
-test('Loom answers a real client envelope through the real shared Fetch handler', async t => {
+/**
+ * The carrier's BROWSER transport, installed the way the page installs it.
+ *
+ * `lib/client.js` is a `__ModuleLoader__` bundle with no ESM exports, so it is
+ * imported against a stub loader and its factory is called directly; the factory
+ * needs no platform module. Driving the real caller is the entire point: this
+ * test used to hand-write the `client-request` envelope, put the bare endpoint
+ * name in `method`, and so agreed with a server that compared against the bare
+ * name — while the real caller copies the full `dsh-loom/getManifest` into it.
+ * Both halves of the lie passed; the running GUI did not.
+ *
+ * @param shared - the real shared Fetch handler for `/api`.
+ * @param origin - the page origin the browser would resolve relative routes on.
+ * @returns the RPC caller the page's `ctx.connection` exposes.
+ */
+async function loadBrowserRpc(shared, origin) {
+  const clientPath = resolveFromAnchors('@deepseek-ai/dsh-client-connection/client');
+  assert.ok(clientPath !== undefined, 'the carrier client build must be resolvable');
+
+  let registration;
+  const previousWindow = globalThis.window;
+  globalThis.window = { __ModuleLoader__: { load: value => { registration = value; } } };
+  try {
+    await import(pathToFileURL(clientPath).href);
+  } finally {
+    if (previousWindow === undefined) delete globalThis.window;
+    else globalThis.window = previousWindow;
+  }
+  assert.ok(registration !== undefined, 'the carrier client bundle must register itself');
+
+  const client = registration.factory(spec => {
+    throw new Error(`the connection client bundle must not need platform module ${String(spec)}`);
+  });
+  const ctx = { provide: (name, value) => { ctx[name] = value; } };
+  client.installConnection(ctx, {
+    transport: {
+      // The page posts the document-relative route and the carrier resolves it
+      // against its own base: same join, same URL as the browser.
+      fetch: async (route, init) => await shared.fetch(new Request(new URL(route, origin), init)),
+    },
+    location: new URL(origin),
+  });
+  return ctx.connection.rpc;
+}
+
+test('Loom answers the browser transport through the real shared Fetch handler', async t => {
   if (!available) return t.skip('DSH profile / built connection package unavailable');
   const { root } = await mountRealConnection();
   const home = mkdtempSync(join(tmpdir(), 'loom-real-'));
@@ -184,6 +229,11 @@ test('Loom answers a real client envelope through the real shared Fetch handler'
       assert.equal(mode, 'buffered', `${bridgePath(endpoint)} must be registered as an exact route`);
     }
 
+    // The envelope is built by the CARRIER'S OWN BROWSER TRANSPORT, not by this
+    // test, and the response is parsed by it too — so whatever the page puts on
+    // the wire is what the host must accept.
+    const rpc = await loadBrowserRpc(shared, 'http://127.0.0.1:3080/');
+
     // `putManifest` runs before `preflight` because the preflight reads the
     // manifest back from disk; this is the client's own order too.
     const payloads = {
@@ -193,23 +243,14 @@ test('Loom answers a real client envelope through the real shared Fetch handler'
       report: { event: 'probe' },
     };
     for (const endpoint of BRIDGE_ENDPOINTS) {
-      const rpcId = `rpc-${endpoint}`;
-      const response = await shared.fetch(new Request(`http://127.0.0.1:3080${bridgePath(endpoint)}`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          type: 'client-request',
-          rpcId,
-          method: endpoint,
-          payload: payloads[endpoint],
-        }),
-      }));
-      assert.equal(response.status, 200, `${endpoint} must answer on ${bridgePath(endpoint)}`);
-      const body = await response.json();
-      assert.equal(body.type, 'server-response', `${endpoint} must answer in the carrier's envelope`);
-      assert.equal(body.rpcId, rpcId, `${endpoint} must echo the correlation id`);
-      assert.equal(body.result.ok, true, `${endpoint} must resolve: ${JSON.stringify(body.result)}`);
+      const result = await rpc.call(BRIDGE_CHANNEL, bridgeEndpoint(endpoint), payloads[endpoint]);
+      assert.equal(result.ok, true, `${endpoint} must resolve: ${JSON.stringify(result)}`);
     }
+
+    // A write followed by a read, through the real transport and the real
+    // carrier, over a manifest the host wrote to a real temp home.
+    const reread = await rpc.call(BRIDGE_CHANNEL, bridgeEndpoint('getManifest'), {});
+    assert.deepEqual(reread.value.manifest.projects.map(project => project.title), ['Probe']);
 
     // A path Loom does not own stays the carrier's 404 — exact routes do not
     // hand the shared channel to Loom.
