@@ -95,6 +95,8 @@ When a skill of the same name appears in several folders, Loom **always reports 
 
 ## Installation
 
+Requires **DSH 0.2 or newer**. The 0.1 private RPC channel (`connection.rpc.handle`) cannot mount on 0.2: the service resolves `webServer` up **Connection's own fiber**, a sibling plugin cannot satisfy that lookup, and the plugin throws `cannot get property "webServer" without inject` while loading. Since 0.2.3 Loom registers exact Fetch routes on the `/api` channel instead — see [Security](SECURITY.md) and the [changelog](CHANGELOG.md).
+
 DSH plugins are installed per **profile**. Desktop and Web are two separate profiles and must be installed separately:
 
 | What you are using | `--profile` |
@@ -241,7 +243,7 @@ A project can name a "default starting point" — a new chat session starts ther
 - A corrupted manifest **is not overwritten**: when reading fails, the original file is kept and reported, and the user decides what to do with it.
 - A manifest from a newer version **refuses to be interpreted**, so downgrading is safe.
 - Uninstalling deletes no folders, sessions, or manifest files.
-- The RPC channel accepts loopback callers only.
+- Loom's bridge endpoints ride the carrier's `/api` channel as **exact Fetch routes**, inheriting the `/api` Host/Origin fence and browser-session authentication. Loom mounts no channel of its own and adds no second authentication layer.
 
 ## Known boundary: writing across folders
 
@@ -304,25 +306,26 @@ This is a design problem rather than a missing translation: **a pure function sh
 ## Architecture
 
 ```
-Host (src/index.js)                     纯 Node，不依赖浏览器
-├── host/manifest-store.js   $DSH_HOME 原子读写 + schema 版本守卫
-├── host/skill-provider.js   ctx.skills.registerProvider —— 让兄弟文件夹贡献技能
-└── RPC /dsh-loom            getManifest / putManifest / preflight / report（loopback）
+Host (src/index.js)                     plain Node, no browser dependency
+├── host/manifest-store.js   atomic $DSH_HOME read/write + schema version guard
+├── host/skill-provider.js   ctx.skills.registerProvider — sibling folders contribute skills
+└── /api/dsh-loom/*          exact Fetch routes: getManifest / putManifest / preflight / report
 
-Client (src/client.cjs)                 只贡献一个槽位
-├── LoomSidebarHost          侧边栏浏览器：项目 / 工作区 / 聊天
-├── LoomSidebar              三段树 + 搜索
-├── SessionRow / LoomGroup   会话行（重命名/分支/归档）与组行
-├── ProjectEditor            文件夹多归属编辑（无独占、无主副）
-├── PreflightModal           上下文预检
-└── RowMenu                  统一的行内省略号菜单
+Client (src/client.cjs)                 contributes one slot only
+├── LoomSidebarHost          the sidebar browser: 项目 / 工作区 / 聊天
+├── LoomSidebar              three-section tree + search
+├── SessionRow / LoomGroup   session rows (rename/branch/archive) and group rows
+├── ProjectEditor            multi-parent folder membership (no exclusivity, no primary)
+├── PreflightModal           the context preflight
+└── RowMenu                  the shared row ellipsis menu
 
-src/core/*.cjs                          纯函数，脱离 DSH 与浏览器即可测试
-├── manifest.cjs             schema 校验与迁移
-├── skill-roots.cjs          成员 → 技能根 / 指令候选
-├── frontmatter.cjs          SKILL.md 元信息解析（含 CRLF）
-├── context-plan.cjs         预检计划：来源、冲突、静默文件夹、写入边界
-└── sections.cjs             三段归属（唯一归属）与可见性规则
+src/core/*.cjs                          pure functions, testable without DSH or a browser
+├── bridge.cjs               the route both halves share (channel / namespace / endpoint list)
+├── manifest.cjs             schema validation and migration
+├── skill-roots.cjs          members → skill roots / instruction candidates
+├── frontmatter.cjs          SKILL.md metadata parsing (CRLF included)
+├── context-plan.cjs         the preflight plan: sources, collisions, silent folders, write boundary
+└── sections.cjs             three-section attribution (unique) and the visibility rules
 ```
 
 ## How it plugs into the UI

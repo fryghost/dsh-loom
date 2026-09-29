@@ -60,6 +60,10 @@ DSH_CHECKOUT=/path/to/deepseek-harness npm test
 
 `test/skill-provider.e2e.test.cjs` 在真实文件系统上验证核心能力：cwd 在 A，B 的技能可见且正文可读。它是 Loom 与"仅 UI 分组"的分界线，改动技能发现路径时先看它。
 
+`test/dsh-02-transport.test.js` 走得更远：它加载**真实的 Cordis 与真实的 `@deepseek-ai/dsh-client-connection`**（从已安装的 profile 解析，取不到则 skip），按 profile 的拓扑把插件挂成**兄弟节点**，然后实测 transport。宿主接线里的 fake 只能确认作者已有的假设——本仓库有两个 bug 正是这样漏出去的（`rpc.handle` 的签名 fake 同意了一个真实 profile 挂不上的调用），所以凡是"某个 API 在真实组合里到底能不能用"的问题，答案都在这个文件里，不在 fake 里。
+
+`test/client-bridge.test.cjs` 断的是两半的**契约**：客户端调用的端点集合 = 宿主注册的端点集合，且两边都经 `src/core/bridge.cjs`（而不是各自复述一遍通道名）。路由分叉的症状是 404 + 空列表，没有任何本地错误——所以它必须由测试挡住。
+
 ## 测试断言行为与不变量，不断言实现细节
 
 `test/manifest-store.test.js` 断的是"损坏的 JSON 被报告、且文件没被清掉"，不是"`loadManifest` 调了一次 `readFile`"。前者重构之后仍然成立，后者一重构就假红。

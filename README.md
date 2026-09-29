@@ -95,6 +95,8 @@ Loom 不是它的复刻，而是换了一条实现路线：**不去改 cwd，而
 
 ## 安装
 
+需要 **DSH 0.2 或更新**。0.1 的私有 RPC 通道（`connection.rpc.handle`）在 0.2 里挂不上——服务内部是在 **Connection 自己的 fiber** 上找 `webServer` 的，兄弟插件满足不了这个查找，插件会在加载时直接抛 `cannot get property "webServer" without inject`。Loom 自 0.2.3 起改为在 `/api` 通道上注册精确 Fetch 路由，见 [安全说明](docs/SECURITY.md) 与 [变更记录](docs/CHANGELOG.md)。
+
 DSH 的插件按 **profile** 安装。Desktop 和 Web 是两个独立 profile，需要分别安装：
 
 | 你在用 | `--profile` |
@@ -241,7 +243,7 @@ get sessionIds() { return this.record.sessionIds.filter(id => sessionPath(id) ==
 - 损坏的清单**不会被覆盖**：读取失败时保留原文件并报告，等用户处理。
 - 更新版本的清单**拒绝解释**，保证降级安全。
 - 卸载不删除任何文件夹、会话或清单文件。
-- RPC 通道仅接受 loopback 调用者。
+- 桥接端点挂在 carrier 的 `/api` 通道上（每个端点一条**精确 Fetch 路由**），沿用 `/api` 已有的 Host/Origin 校验与浏览器会话鉴权；Loom 不自建通道，也不叠加第二套鉴权。
 
 ## 已知边界：跨文件夹写入
 
@@ -307,7 +309,7 @@ Loom 不擅自绕过安全边界，但这条上游路径的收益/成本比明�
 Host (src/index.js)                     纯 Node，不依赖浏览器
 ├── host/manifest-store.js   $DSH_HOME 原子读写 + schema 版本守卫
 ├── host/skill-provider.js   ctx.skills.registerProvider —— 让兄弟文件夹贡献技能
-└── RPC /dsh-loom            getManifest / putManifest / preflight / report（loopback）
+└── /api/dsh-loom/*           精确 Fetch 路由：getManifest / putManifest / preflight / report
 
 Client (src/client.cjs)                 只贡献一个槽位
 ├── LoomSidebarHost          侧边栏浏览器：项目 / 工作区 / 聊天
@@ -318,6 +320,7 @@ Client (src/client.cjs)                 只贡献一个槽位
 └── RowMenu                  统一的行内省略号菜单
 
 src/core/*.cjs                          纯函数，脱离 DSH 与浏览器即可测试
+├── bridge.cjs               两半共用的路由（通道 / 命名空间 / 端点表）
 ├── manifest.cjs             schema 校验与迁移
 ├── skill-roots.cjs          成员 → 技能根 / 指令候选
 ├── frontmatter.cjs          SKILL.md 元信息解析（含 CRLF）

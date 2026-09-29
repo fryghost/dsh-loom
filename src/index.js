@@ -3,8 +3,9 @@
  *
  * Responsibilities:
  *   1. persist the project manifest under `$DSH_HOME/projects/manifest.json`;
- *   2. expose manifest reads/writes plus a context-plan preflight over the
- *      RPC channel the client already uses;
+ *   2. expose manifest reads/writes plus a context-plan preflight on the
+ *      carrier's shared `/api` channel (see `./core/bridge.cjs` for why the
+ *      channel is shared rather than private);
  *   3. register the skill provider that lets sibling folders contribute.
  *
  * Optional services are read with `ctx.get()` rather than declared in `inject`,
@@ -22,22 +23,15 @@ import { createSkillProvider } from './host/skill-provider.js';
 import skillRootsCore from './core/skill-roots.cjs';
 import contextPlanCore from './core/context-plan.cjs';
 import frontmatterCore from './core/frontmatter.cjs';
+import bridgeCore from './core/bridge.cjs';
 
 const { skillRootsForProject, instructionCandidatesForProject } = skillRootsCore;
 const { buildContextPlan } = contextPlanCore;
 const { parseSkillMetadata } = frontmatterCore;
+const { BRIDGE_CHANNEL, BRIDGE_ENDPOINTS, bridgePath } = bridgeCore;
 
 const name = 'dsh-loom';
 const inject = ['connection'];
-
-/**
- * The client's RPC channel; `connection.rpc.call` targets this.
- *
- * Called "the bridge" throughout this file. It is not described as
- * "loopback-only" any more: since 0.2 the carrier admits every request as the
- * operator Peer, and this channel no longer declares an authority of its own.
- */
-const BRIDGE_CHANNEL = '/dsh-loom';
 
 function resolveDshHome(explicit) {
   if (typeof explicit === 'string' && explicit.length > 0) return explicit;
@@ -243,27 +237,113 @@ function createRpcHandler(ctx, dshHome) {
   };
 }
 
+/**
+ * Correlation id used when the carrier cannot read one from the request.
+ *
+ * Mirrors the carrier's own placeholder (`rpc-host.ts`,
+ * `INVALID_REQUEST_RPC_ID`): the client matches the id it sent and fails the
+ * call on a mismatch, so a malformed request still has to answer with the
+ * response envelope rather than a bare status.
+ */
+const INVALID_REQUEST_RPC_ID = 'invalid-request';
+
+/** Carrier code for an envelope the endpoint cannot accept. */
+const BAD_REQUEST_CODE = 'gateway/bad-request';
+
+/** One `server-response` envelope, in the shape the carrier's client parses. */
+function bridgeResponse(rpcId, result) {
+  return Response.json({ type: 'server-response', rpcId, result });
+}
+
+/**
+ * Answer one request on a Loom endpoint.
+ *
+ * The envelope is Connection's protocol, not Loom's — `client-request` in,
+ * `server-response` out, correlation id echoed back. Loom re-implements it
+ * (instead of borrowing the carrier's internal framing) because an exact Fetch
+ * route hands back a raw `Response`; the rules below are the carrier's own, so
+ * a client that works against `/api` works against Loom:
+ *
+ *   - a body that is not JSON is a 400 and no envelope at all;
+ *   - a malformed or misaddressed envelope is a 200 with `ok: false`, NOT an
+ *     HTTP error, so the reason survives to the caller instead of collapsing
+ *     into a status code the UI cannot explain;
+ *   - a thrown handler is caught inside {@link createRpcHandler} and travels the
+ *     same way.
+ *
+ * @param request - request the carrier already fenced and authenticated.
+ * @param endpoint - the endpoint this route owns.
+ * @param handler - Loom's endpoint handler.
+ * @returns the response envelope, or 400 when the body is unreadable.
+ */
+async function respondToBridge(request, endpoint, handler) {
+  let body;
+  try {
+    body = await request.json();
+  } catch {
+    return new Response('body is not JSON', { status: 400 });
+  }
+
+  const rpcId = typeof body?.rpcId === 'string' ? body.rpcId : INVALID_REQUEST_RPC_ID;
+  const rejection = body === null || typeof body !== 'object' || Array.isArray(body)
+    ? 'message is not an object'
+    : body.type !== 'client-request'
+      ? `type is not "client-request"`
+      : typeof body.rpcId !== 'string'
+        ? 'rpcId is not a string'
+        : body.method !== endpoint
+          ? `method ${JSON.stringify(body.method)} does not match endpoint ${JSON.stringify(endpoint)}`
+          : undefined;
+  if (rejection !== undefined) {
+    return bridgeResponse(rpcId, {
+      ok: false,
+      error: { code: BAD_REQUEST_CODE, message: rejection, details: {} },
+    });
+  }
+
+  return bridgeResponse(rpcId, await handler(endpoint, body.payload, request.signal));
+}
+
 function apply(ctx, config = {}) {
   const dshHome = resolveDshHome(config.dshHome);
 
   /**
-   * Register the client bridge.
+   * Mount the client bridge: one exact Fetch route per endpoint, on the shared
+   * `/api` channel.
    *
-   * TWO arguments, and that is not cosmetic. DSH 0.2 removed the third
-   * `{ authority }` parameter from `HostConnectionRpc.handle` — the commit is
-   * `refactor(connection): admit every request as the single operator Peer`,
-   * which deleted `ConnectionRpcAuthority` (including `'loopback'`) and made the
-   * carrier admit every request as the operator. `rpc-host.ts` now reads
-   * `handle: (channel, handler) => this.register(owner, channel, handler)`, so a
-   * third argument is silently discarded rather than rejected.
+   * This REPLACES `connection.rpc.handle(BRIDGE_CHANNEL, handler)`, which DSH
+   * 0.2 cannot honour from a plugin context — `register` reads
+   * `owner.webServer` off Context's own fiber and throws
+   * `cannot get property "webServer" without inject` while the plugin is still
+   * loading. `./core/bridge.cjs` carries the full argument, including why the
+   * previous two fixes for this same channel (the dropped `{ authority }`
+   * argument, which produced `HTTP 405`) were both about the same mistake:
+   * a private channel Loom cannot actually mount.
    *
-   * Passing it anyway is what produced `HTTP 405` on every call. The channel
-   * never mounted, so `POST /dsh-loom/getManifest` fell through to the static
-   * file route, whose fallback answers non-GET/HEAD with 405
-   * (`host/frontend-static`: "Non-GET/HEAD without a matching named route is
-   * 405"). Access control now lives in the carrier, not in this call.
+   * Registration is an effect owned by this plugin's context, so unloading Loom
+   * withdraws the routes; the carrier rejects a duplicate path, so a second
+   * registration would be a hard error rather than a silent shadow.
    */
-  ctx.connection.rpc.handle(BRIDGE_CHANNEL, createRpcHandler(ctx, dshHome));
+  const connection = ctx.connection;
+  if (typeof connection?.fetch?.register !== 'function') {
+    // Loud on purpose. Both earlier failures of this channel were silent: the
+    // routes never mounted, every call answered 404/405, and the only visible
+    // symptom was an empty sidebar section. Refusing to load is recoverable and
+    // diagnosable; a half-mounted plugin is neither.
+    throw new Error(
+      'dsh-loom requires the Connection Fetch registry (DSH >= 0.2): '
+      + 'ctx.connection.fetch.register is not available in this composition',
+    );
+  }
+  const handler = createRpcHandler(ctx, dshHome);
+  for (const endpoint of BRIDGE_ENDPOINTS) {
+    connection.fetch.register({
+      path: bridgePath(endpoint),
+      methods: ['POST'],
+      requestBody: 'buffered',
+      fetch: request => respondToBridge(request, endpoint, handler),
+    });
+  }
 
   // Register the sibling-folder skill provider. `inject` keeps Loom loadable
   // when no skills registry exists in this composition.
@@ -297,4 +377,18 @@ function isSameOrInside(child, base) {
   return c === b || c.startsWith(`${b}/`);
 }
 
-export { BRIDGE_CHANNEL, apply, createRpcHandler, gatherInstructions, gatherSkills, inject, isSameOrInside, name, resolveDshHome, resolvePaths };
+export {
+  BRIDGE_CHANNEL,
+  BRIDGE_ENDPOINTS,
+  apply,
+  bridgePath,
+  createRpcHandler,
+  gatherInstructions,
+  gatherSkills,
+  inject,
+  isSameOrInside,
+  name,
+  resolveDshHome,
+  resolvePaths,
+  respondToBridge,
+};

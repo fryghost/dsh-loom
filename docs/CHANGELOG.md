@@ -3,6 +3,45 @@
 本项目的版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 清单格式（`$DSH_HOME/projects/manifest.json` 的 `schemaVersion`）与包版本号是**两条独立的轴**：后者可以升，前者只在清单结构真的变化时才升。
 
+## [0.2.3] - 2026-09-30
+
+修掉 0.2.2 留下的**半个修复**：通道仍然是私有通道，而 DSH 0.2 里插件根本挂不上私有通道。0.2.2 去掉第三个实参只是把失败从「静默不挂载」推进到「加载时抛错」。
+
+### 修复
+
+- **`cannot get property "webServer" without inject`（插件加载即失败）**：0.2 的 `HostConnectionRpc.handle` 转给 `register(owner, …)`，而 `owner` 是**构造 Connection 服务的那个 context**——也就是 Connection 插件自己的 fiber，对 Loom 来说是兄弟节点。`register` 随后的第一步就是 `owner.webServer.register(route)`（`packages/client/connection/src/rpc-host.ts:191-192`），Cordis 沿**那条** fiber 向上解析属性，因此永远到不了提供 `webServer` 的那个插件，查找落空并抛出该错误——发生在**加载阶段**，一个请求都还没服务。这不是插件侧能绕开的查找作用域问题（`inject: ['webServer']` 也没用：解析起点是 Connection 的 fiber，不是调用方的）。
+
+- **改为在 carrier 的共享 `/api` 通道上注册精确 Fetch 路由**（每个端点一条）：
+
+  ```
+  POST /api/dsh-loom/getManifest
+  POST /api/dsh-loom/putManifest
+  POST /api/dsh-loom/preflight
+  POST /api/dsh-loom/report
+  ```
+
+  三个理由，按重要性排序：① `/api` 由 carrier 统一做 Host/Origin 围栏 + 浏览器会话鉴权，且**在派发之前**完成，Loom 因此继承与其余 `/api` 端点相同的接纳，而不必自己声明 authority；② 路由是 carrier 中立的——HTTP bridge、worker host 与 desktop 直连通道都经 `createSharedFetchHandler` 派发；③ 不需要 `webServer` 注入，宿主半边在根本没有 HTTP 服务的组合里也照样加载。客户端相应改为 `connection.rpc.call('/api', 'dsh-loom/<endpoint>', …)`。
+
+- **两半共用一个路由来源**：新增 `src/core/bridge.cjs`（通道 `/api`、命名空间 `dsh-loom`、端点表、`bridgePath` / `bridgeEndpoint`），宿主与客户端都从它导入。两边对路由的理解一旦分叉，就是每次调用 404 + 项目段空白——这正是本次故障的表现形式。
+
+- **缺 transport 时响亮失败**：若组合里没有 Connection 的 Fetch 注册表，`apply()` 抛出带明确原因的异常，而不是留一个半挂载的插件。缺 `skills` / `workspaceRegistry` 仍然降级——那是可选能力，transport 不是。
+
+### 测试
+
+- **接线 fake 再一次放过了 bug，原因和上次同型**：它把 `rpc.handle` 建模成「能用」，于是它同意的调用恰恰是真实 profile 挂不上的那个。现在这个 fake **没有可用的 `rpc.handle`**：调用会被计数，并抛出真实实现抛出的那个错误；`fetch.register` 则按 `assertFetchRoute` 的规则校验路径、方法与 body 模式。把旧写法放回去，24 条用例里有 12 条变红。
+
+- **`test/dsh-02-transport.test.js`（新增）**：不再只用 fake。它加载**真实的 Cordis 与真实的 `@deepseek-ai/dsh-client-connection` 构建产物**（从已安装 profile 解析，取不到则 skip），按 profile 的拓扑把插件都挂成**兄弟节点**，然后：
+
+  1. 用一个探针插件实测 `rpc.handle`——**在真实 0.2 代码上复现了 `without inject`**（这条同时是绊线：上游若修好该查找，它会变红，提醒重新评估这个绕法）；
+  2. 挂上 Loom 真实的 `apply()`，用真实的 `createSharedFetchHandler('/api')` 发真实的 `client-request` 信封，四个端点都回真实的 `server-response`，未注册路径仍是 carrier 的 404。
+
+- **`test/client-bridge.test.cjs`（新增）**：跨两半的契约——客户端调用的端点集合必须等于宿主注册的端点集合；客户端必须经共享 helper 走共享通道，且源码里不得再出现 `/dsh-loom` 字面量；宿主不得再出现 `rpc.handle(`。实测：把客户端改回私有通道，其中一条变红。
+
+### 变更
+
+- **要求 DSH ≥ 0.2**：0.1 的私有通道写法已彻底移除，装 0.1 的 profile 不能再用这个版本（README 两处与 `docs/SECURITY.md` 已同步）。
+- 安全说明改写：不再声称「仅接受 loopback 调用者」，改为写清**谁在做鉴权**（carrier 的 `/api` 准入）、它挡住什么、以及为什么私有通道在 0.2 不可用。
+
 ## [0.2.2] - 2026-09-30
 
 适配 DSH 0.2 的一处破坏性 API 变更。与 0.2.1 那次相同，**症状和根因隔了两层**：报错是 HTTP 405，真正的原因是 RPC 通道没挂上。

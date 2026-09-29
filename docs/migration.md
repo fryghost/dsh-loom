@@ -41,13 +41,13 @@ v1 中"主文件夹"决定了新会话的 cwd，因而间接决定了哪些技�
 
 1. **备份**：复制 `%APPDATA%`/浏览器 profile 中 `dsh-projects` 相关的 localStorage 键（导出为 JSON 即可）。
 2. **转换**：把 v1 数据传给 `migrateFromV1()`，得到 v2 manifest。
-3. **写入**：通过 Loom 的 `putManifest` RPC 端点，或直接写 `$DSH_HOME/projects/manifest.json`。
+3. **写入**：通过 Loom 的桥接端点 `putManifest`，或直接写 `$DSH_HOME/projects/manifest.json`。
 4. **校验**：用项目行的 `⋯` → 上下文预检，确认每个项目的成员数量与预期一致。
 5. **保留**：不要删除 v1 的 localStorage 键，降级时仍可回退。
 
 ## 并存
 
-Loom 与 dsh-projects 使用不同的 RPC 通道（`/dsh-loom` vs `/dsh-projects`）与不同的存储位置，**不会互相覆盖对方的数据**。
+Loom 与 dsh-projects 使用不同的端点与不同的存储位置，**不会互相覆盖对方的数据**：dsh-projects 注册自己的 RPC 通道 `/dsh-projects`；Loom 自 0.2.3 起不再自建通道，而是在 carrier 的 `/api` 通道上注册自有端点（`/api/dsh-loom/*`）。
 
 但它们**不能同时启用**，而且不是"会出现两组面板"那么简单——两者都注册 `sidebar.workspaces`，且**都用 `priority: -100`**。DSH 的槽位规则是：同一个 cell 在**相同优先级**上只允许一个注册，第二个会直接抛错：
 

@@ -23,21 +23,28 @@
 
 配置过的文件夹本身**永远不被写入**，卸载也不删除清单、文件夹或会话。
 
-### RPC 通道
+### 桥接端点
 
-客户端通过 `/dsh-loom` 通道调用 Host 的四个端点：`getManifest`、`putManifest`、`preflight`、`report`。通道注册时声明：
+客户端经 carrier 的 **`/api` 通道**调用 Host 的四个端点：`getManifest`、`putManifest`、`preflight`、`report`。每个端点一条**精确 Fetch 路由**：
 
-```js
-ctx.connection.rpc.handle(BRIDGE_CHANNEL, handler, { authority: 'loopback' })
+```
+POST /api/dsh-loom/getManifest
+POST /api/dsh-loom/putManifest
+POST /api/dsh-loom/preflight
+POST /api/dsh-loom/report
 ```
 
-即只有 loopback 调用者能调用它。这里要说清边界：**这个判定由 DSH 的 `connection` 服务执行，Loom 自身不再叠加任何鉴权。** 因此 loopback 挡住的是来自其他机器的访问，不是同一台机器、同一用户下已经能访问该通道的其他进程。把它读成"同机隔离"是过度的。
+**鉴权由 DSH 的 `connection` 服务在派发之前完成**：`/api` 的统一 Host/Origin 围栏 + 浏览器会话签名 cookie。Loom 自己不叠加任何鉴权，也不声明任何 authority——请求能到达端点，说明它已经通过了这两道判定。这里要说清边界：这挡住的是**没有该浏览器会话的调用者**（含其他机器上的、以及本机上没拿到 cookie 的），不等于"同机隔离"，也不等于"只有 DSH 页面能调"——同一用户下已经持有该 cookie 的进程照样能调。
+
+每条路由是**精确路径**：Loom 不接管 `/api` 的任何通配区间，未注册的路径仍是 carrier 自己的 404。
+
+> **为什么不是私有通道。** Loom 0.2.2 及更早版本注册私有通道 `/dsh-loom`（`ctx.connection.rpc.handle(channel, handler)`）。**这在 DSH 0.2 上挂不上**：`handle` 转给 `register(owner, …)`，而 `owner` 是构造 Connection 服务的那个 context（Connection 插件自己的 fiber，对我们的插件来说是**兄弟节点**），`register` 随后读 `owner.webServer` 并在 Cordis 里沿**那条** fiber 向上查找——永远查不到提供 `webServer` 的插件，于是在插件加载阶段抛出 `cannot get property "webServer" without inject`。这是 DSH 一侧的查找作用域问题，插件侧无法绕过；改用共享通道上的自有端点后，既不依赖 `webServer` 注入，也顺带把鉴权交给了本就在做这件事的那一层。
 
 `report` 把客户端上报的对象序列化成一行 JSON 追加进日志。`JSON.stringify` 会转义换行，所以一条上报伪造不出额外的日志行；但日志内容本身不校验、不清理，也不会自动轮转或截断——它随时间增长。这是诊断优先的有意取舍，不是漏洞，但你该知道它在那里。
 
 ### Client 半边（`src/client.cjs`，打包进 `dist/client.js`，在页面里运行）
 
-在 DSH 的槽位里渲染 React 界面，经上面那条通道读写清单。它不发网络请求（没有 `fetch`、`XMLHttpRequest`、`WebSocket`），不加载远程资源。打包时 `react`、`react-dom` 与 `@deepseek-ai/dsh-client-ui-primitives` 保持 external，用的是宿主页面已经加载的同一份实例，而不是打进第二份。
+在 DSH 的槽位里渲染 React 界面，经上面那四个端点读写清单。客户端**不自己发请求**：所有调用都经 `connection.rpc` 交给 carrier，代码里没有直接的 `fetch` / `XMLHttpRequest` / `WebSocket`，也不加载远程资源。打包时 `react`、`react-dom` 与 `@deepseek-ai/dsh-client-ui-primitives` 保持 external，用的是宿主页面已经加载的同一份实例，而不是打进第二份。
 
 ## 不在这个范围内的
 
@@ -58,6 +65,6 @@ ctx.connection.rpc.handle(BRIDGE_CHANNEL, handler, { authority: 'loopback' })
 
 - 受影响的版本（`package.json` 的 `version`）与 DSH 版本、`--profile`；
 - 复现步骤，尽量给最小路径；
-- 你判断的影响，以及它落在上面哪一块（Host 读写路径 / RPC 边界 / 清单持久化 / 页面渲染）。
+- 你判断的影响，以及它落在上面哪一块（Host 读写路径 / 桥接端点边界 / 清单持久化 / 页面渲染）。
 
 这是个人维护的仓库，没有承诺的响应时限；确认之后会在对应的 advisory 里说明影响与修复版本。

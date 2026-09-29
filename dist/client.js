@@ -4,6 +4,28 @@ var __commonJS = (cb, mod) => function __require() {
   return mod || (0, cb[__getOwnPropNames(cb)[0]])((mod = { exports: {} }).exports, mod), mod.exports;
 };
 
+// src/core/bridge.cjs
+var require_bridge = __commonJS({
+  "src/core/bridge.cjs"(exports2, module2) {
+    var BRIDGE_CHANNEL2 = "/api";
+    var BRIDGE_NAMESPACE = "dsh-loom";
+    var BRIDGE_ENDPOINTS = Object.freeze(["getManifest", "putManifest", "preflight", "report"]);
+    function bridgePath(endpoint) {
+      return `${BRIDGE_CHANNEL2}/${BRIDGE_NAMESPACE}/${endpoint}`;
+    }
+    function bridgeEndpoint2(endpoint) {
+      return `${BRIDGE_NAMESPACE}/${endpoint}`;
+    }
+    module2.exports = {
+      BRIDGE_CHANNEL: BRIDGE_CHANNEL2,
+      BRIDGE_ENDPOINTS,
+      BRIDGE_NAMESPACE,
+      bridgeEndpoint: bridgeEndpoint2,
+      bridgePath
+    };
+  }
+});
+
 // src/core/sections.cjs
 var require_sections = __commonJS({
   "src/core/sections.cjs"(exports2, module2) {
@@ -288,7 +310,7 @@ var {
 } = require("@deepseek-ai/dsh-client-ui-primitives");
 var h = React.createElement;
 var NS = "dsh-loom";
-var CHANNEL = "/dsh-loom";
+var { BRIDGE_CHANNEL, bridgeEndpoint } = require_bridge();
 var { deriveSections } = require_sections();
 var { mergeMembers } = require_manifest();
 var dictionaries = {
@@ -877,7 +899,7 @@ function interpolate(template, values) {
 }
 function createBridge(ctx) {
   const call = async (endpoint, payload) => {
-    const result = await ctx.connection.rpc.call(CHANNEL, endpoint, payload ?? {});
+    const result = await ctx.connection.rpc.call(BRIDGE_CHANNEL, bridgeEndpoint(endpoint), payload ?? {});
     if (result === void 0 || result === null) {
       throw new Error(`dsh-loom: empty response from ${endpoint}`);
     }

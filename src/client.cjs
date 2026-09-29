@@ -41,7 +41,14 @@ const {
 const h = React.createElement;
 
 const NS = 'dsh-loom';
-const CHANNEL = '/dsh-loom';
+// The carrier route both halves share. NOT a private channel: on DSH 0.2 a
+// plugin cannot mount one (`connection.rpc.handle` resolves `webServer` off
+// Connection's own fiber and throws while loading), so Loom rides the shared
+// `/api` channel on exact per-endpoint routes the host registers. See
+// `./core/bridge.cjs` — imported rather than restated, because a client and a
+// host that disagree about the route is a 404 on every call and an empty 项目
+// section, which is precisely how the 0.2 change presented itself.
+const { BRIDGE_CHANNEL, bridgeEndpoint } = require('./core/bridge.cjs');
 const { deriveSections } = require('./core/sections.cjs');
 // The editor rebuilds a member list through the SAME core rule the host uses to
 // read it back, so "editing membership" cannot quietly rewrite roles or prune a
@@ -642,10 +649,10 @@ function interpolate(template, values) {
     (values[key] === undefined ? match : String(values[key])));
 }
 
-/** Thin wrapper over the loopback RPC channel; every call is host-backed. */
+/** Thin wrapper over the host bridge; every call is host-backed. */
 function createBridge(ctx) {
   const call = async (endpoint, payload) => {
-    const result = await ctx.connection.rpc.call(CHANNEL, endpoint, payload ?? {});
+    const result = await ctx.connection.rpc.call(BRIDGE_CHANNEL, bridgeEndpoint(endpoint), payload ?? {});
     if (result === undefined || result === null) {
       throw new Error(`dsh-loom: empty response from ${endpoint}`);
     }
