@@ -3,6 +3,32 @@
 本项目的版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 清单格式（`$DSH_HOME/projects/manifest.json` 的 `schemaVersion`）与包版本号是**两条独立的轴**：后者可以升，前者只在清单结构真的变化时才升。
 
+## [0.2.2] - 2026-09-30
+
+适配 DSH 0.2 的一处破坏性 API 变更。与 0.2.1 那次相同，**症状和根因隔了两层**：报错是 HTTP 405，真正的原因是 RPC 通道没挂上。
+
+### 修复
+
+- **`HTTP 405` + 项目段空白**：DSH 0.2 的 `refactor(connection): admit every request as the single operator Peer` 删除了 `HostConnectionRpc.handle` 的第三个参数（连同 `ConnectionRpcAuthority`，含 `'loopback'`），改为由 carrier 层统一按 operator 接纳请求。现在签名是：
+
+  ```ts
+  handle(channel: string, handler: ConnectionRpcHandler): () => Promise<void>
+  ```
+
+  而 `apply()` 仍在传 `{ authority: 'loopback' }`。**JS 会忽略多余实参，所以不抛错**——通道静默没挂上，`POST /dsh-loom/getManifest` 于是落到静态文件路由，其兜底对非 GET/HEAD 一律回 405（`host/frontend-static`：*Non-GET/HEAD without a matching named route is 405*）。访问控制现在由 carrier 负责，不再由这次调用声明。
+
+  **"项目没了"是同一个原因，不是第二个 bug**：客户端的槽位注册**是成功的**（客户端日志里 `{"event":"register","slot":"sidebar.workspaces","ok":true}`），但列表数据要经桥接读取，通道没挂就只剩空段。
+
+- **诊断报告本身失效**：apply 时的诊断读了 `ctx.slots.declarationEpoch`，而 0.2 不再在该对象上暴露它，导致每条日志都变成 `is not a function` 而不是一个事实。现只探 `spec()`，并把不可用的探测**作为值报告**而不是升级为异常。
+
+### 测试
+
+- **宿主接线的 fake 无法抓到本 bug**，这正是它漏出去的原因：它声明 `handle: (channel, handler) => …`，**和真实实现一样忽略第三个实参**。现在它会**点数实参并在多传时抛错**，旧写法会让三个测试变红。
+
+### 核查
+
+逐一比对了插件用到的其余服务接口（对照 0.2 运行时契约，而非假定升级是齐平的），**均未变**：`locale.getLocale/register`、`workspaces.create/rename/delete/archiveSession`、`sessions.binding(...)?.session.rename(...)`，以及 `uiWorkspace.openSession`——后者形参拓宽为 `SessionTarget = SessionId | SubagentAddress`，本插件传的 id 仍然合法。
+
 ## [0.2.1] - 2026-09-28
 
 适配 DSH 0.1.7 的破坏性漂移。三个缺陷有一个共同特征：**都不报错**——注册日志显示 `ok: true`，测试全绿，但功能静默失效。因此本版同时补上了能真实失败的回归测试。
