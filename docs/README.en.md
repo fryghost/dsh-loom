@@ -145,6 +145,33 @@ cat ~/.dsh/profiles/web/package.json
 
 `"dsh-loom"` should appear in `dsh.profile.bundles`. If it only appears under `dependencies` and never made it into `bundles`, the package's `dsh.bundle` was not recognized — the plugin will not mount.
 
+### Upgrade
+
+A `github:` install pins the **exact commit** into the profile's `pnpm-lock.yaml`, so reinstalling does not pick up new commits on its own. To move to the latest:
+
+```bash
+dsh plugin --profile web add github:fryghost/dsh-loom
+```
+
+That re-resolves the remote and refreshes the commit in the lockfile. Then **fully restart** the profile.
+
+To see which version you are on:
+
+```bash
+# the package version
+node -p "require(process.env.USERPROFILE + '/.dsh/profiles/web/node_modules/dsh-loom/package.json').version"
+# or the commit the lockfile pinned
+grep -A1 'dsh-loom' ~/.dsh/profiles/web/pnpm-lock.yaml | grep codeload
+```
+
+Every released version carries a git tag (`v0.2.5` and friends), so you can tell how far behind you are:
+
+```bash
+git ls-remote --tags https://github.com/fryghost/dsh-loom.git
+```
+
+A `link:` install is not subject to the lockfile: rebuild `dist/client.js` and restart.
+
 ### Uninstall
 
 ```bash

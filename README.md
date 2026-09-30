@@ -145,6 +145,33 @@ cat ~/.dsh/profiles/web/package.json
 
 `dsh.profile.bundles` 里应出现 `"dsh-loom"`。如果只出现在 `dependencies` 而没进 `bundles`，说明包的 `dsh.bundle` 没被识别——插件不会挂载。
 
+### 升级
+
+`github:` 安装会把**具体提交**写进 profile 的 `pnpm-lock.yaml`，所以重装不会自动拿到新提交。要升级到最新：
+
+```bash
+dsh plugin --profile web add github:fryghost/dsh-loom
+```
+
+这会重新解析远端并刷新 lock 里的提交。装完**完整重启** profile。
+
+想知道自己装的是哪一版：
+
+```bash
+# 包版本号
+node -p "require(process.env.USERPROFILE + '/.dsh/profiles/web/node_modules/dsh-loom/package.json').version"
+# 或者看 lock 里钉住的那个提交
+grep -A1 'dsh-loom' ~/.dsh/profiles/web/pnpm-lock.yaml | grep codeload
+```
+
+已经发布的版本都有 git tag（`v0.2.5` 等），可以对照 tag 判断落后多少：
+
+```bash
+git ls-remote --tags https://github.com/fryghost/dsh-loom.git
+```
+
+`link:` 安装的检出则不受 lock 影响：改完源码重建 `dist/client.js`，重启即可生效。
+
 ### 卸载
 
 ```bash
