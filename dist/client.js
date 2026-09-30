@@ -863,6 +863,34 @@ var STYLES = `
 .loom-group-head:focus-within .loom-actions { display: inline-flex; }
 .loom-row:hover .loom-time,
 .loom-group-head:hover .loom-time { display: none; }
+
+/* AN OPEN MENU PINS ITS OWN ANCHOR. Without this the row menu is unreachable
+   with a real pointer, and the failure looks like "delete does nothing".
+   The row Menu is portaled, so the host re-measures the anchor every
+   animation frame and positions the list from that rect. The ellipsis lives in
+   .loom-actions, which is display: none unless the row is hovered \u2014 so the
+   moment the pointer travels from the ellipsis down to the dropdown, the state
+   is lost, the anchor collapses to 0x0, and the list is clamped to the overlay
+   margin: it teleports to the viewport's top-left corner and the
+   close-on-pointer-leave grace then closes it. The pointer can never catch it.
+   The host's own rows solve exactly this the same way \u2014 a state class that keeps
+   the actions laid out while the menu is open (Rows.module.css:
+   .projectRow.menuOpen .rowActions { display: inline-flex }, fed by the
+   menuOpen state in Rows.tsx). Loom had no such class.
+   NO BACKTICKS IN THIS COMMENT: the whole stylesheet is one template literal,
+   and a stray one ends it early \u2014 a mistake this file has made before. */
+.loom-row.loom-menu-open .loom-actions,
+.loom-group-head.loom-menu-open .loom-actions { display: inline-flex; }
+/* Pinning the anchor is not enough on its own: the row must keep the WHOLE
+   hover appearance it had when the menu opened. A returned claim badge would
+   change the row's content width and shift the anchor sideways \u2014 menu and all \u2014
+   and a returned timestamp would push the actions out from under the pointer.
+   No backticks here either, for the reason stated above. */
+.loom-group-head.loom-menu-open .loom-claimed,
+.loom-row.loom-menu-open .loom-time,
+.loom-group-head.loom-menu-open .loom-time { display: none; }
+.loom-row.loom-menu-open,
+.loom-group-head.loom-menu-open { background: var(--dsw-alias-interactive-bg-hover); }
 .loom-icon-btn {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; padding: 0; border: none; border-radius: 4px;
@@ -1235,8 +1263,11 @@ function sessionTime(summary, t) {
   if (hours < 24) return interpolate(t("hoursAgo"), { count: hours });
   return interpolate(t("daysAgo"), { count: Math.round(hours / 24) });
 }
-function RowMenu({ items, onSelect, label }) {
+function RowMenu({ items, onSelect, label, onOpenChange }) {
   const [open, setOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (onOpenChange !== void 0) onOpenChange(open);
+  }, [open, onOpenChange]);
   return h(Menu, {
     open,
     onClose: () => setOpen(false),
@@ -1261,6 +1292,7 @@ function RowMenu({ items, onSelect, label }) {
 function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t }) {
   const title = summary.displayTitle || t("untitled");
   const settled = summary.blank !== true;
+  const [menuOpen, setMenuOpen] = React.useState(false);
   const items = [
     { id: "rename", label: t("rename"), icon: h(IconEditOutlineRegular, null) },
     { id: "fork", label: t("fork"), icon: h(IconBranchOutlineRegular, null) },
@@ -1272,7 +1304,11 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
       role: "treeitem",
       tabIndex: 0,
       "aria-selected": current === true,
-      className: current === true ? "loom-row loom-row-current" : "loom-row",
+      className: [
+        "loom-row",
+        current === true ? "loom-row-current" : "",
+        menuOpen ? "loom-menu-open" : ""
+      ].filter((part) => part.length > 0).join(" "),
       title,
       onClick,
       onKeyDown: (event) => {
@@ -1296,6 +1332,7 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
       h(RowMenu, {
         label: t("sessionActions"),
         items,
+        onOpenChange: setMenuOpen,
         onSelect: (id) => {
           if (id === "rename") onRename(summary.id, title);
           if (id === "fork") onFork(summary.id);
@@ -1312,13 +1349,14 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
   const shown = showAll ? row.sessions : row.sessions.slice(0, PREVIEW);
   const hidden = row.sessions.length - PREVIEW;
   const claimed = Array.isArray(claimedBy) && claimedBy.length > 0;
+  const [menuOpen, setMenuOpen] = React.useState(false);
   return h(
     "div",
     { className: "loom-group" },
     h(
       "div",
       {
-        className: "loom-group-head",
+        className: menuOpen ? "loom-group-head loom-menu-open" : "loom-group-head",
         role: "treeitem",
         "aria-expanded": open,
         onClick: () => onToggleCollapse(row.key)
@@ -1353,6 +1391,7 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
         menu !== void 0 && h(RowMenu, {
           label: menu.label,
           items: menu.items,
+          onOpenChange: setMenuOpen,
           onSelect: menu.onSelect
         }),
         h("button", {

@@ -355,6 +355,8 @@ The hierarchy is distinguished by **static signals**, not by hover changes:
 
 **Deliberately no hover glyph swap** (icon ↔ triangle): the glyph jumps as the pointer enters and leaves, and at exactly the moment you are trying to aim at it, "what is this" and "is it collapsed" both become uncertain. **A static glyph is worth more than one glyph that says two things.** This too is written into `test/client-contract.test.cjs`.
 
+**A row's buttons, however, must never depend on hover alone.** The ellipsis lives in `.loom-actions`, shown only while the row is hovered — fine on its own. The problem is that the row menu is portaled, and the host `Menu` re-measures its anchor on every animation frame: the instant the pointer leaves the row to reach the menu, the anchor collapses to `0x0`, the list is clamped to the viewport's top-left corner and then closed — so it simply cannot be clicked with a real pointer (programmatic clicks skip the actionability rules, which is why every test stayed green while this happened). The fix matches the host's own rows: while the menu is open the row carries `loom-menu-open`, pinning the anchor and holding the whole hover appearance steady so a width change cannot shift the anchor out from under the menu. `test/menu-anchor.test.cjs` locks it down and `scripts/mutation-menu-anchor.cjs` proves it goes red on the broken code.
+
 ### The UI is built directly on DSH's design system
 
 The client writes no buttons, tags, state dots or dialogs of its own; it requires the platform module `@deepseek-ai/dsh-client-ui-primitives` — **the same set of atoms the shipped UI uses**:

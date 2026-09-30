@@ -615,6 +615,34 @@ const STYLES = `
 .loom-group-head:focus-within .loom-actions { display: inline-flex; }
 .loom-row:hover .loom-time,
 .loom-group-head:hover .loom-time { display: none; }
+
+/* AN OPEN MENU PINS ITS OWN ANCHOR. Without this the row menu is unreachable
+   with a real pointer, and the failure looks like "delete does nothing".
+   The row Menu is portaled, so the host re-measures the anchor every
+   animation frame and positions the list from that rect. The ellipsis lives in
+   .loom-actions, which is display: none unless the row is hovered — so the
+   moment the pointer travels from the ellipsis down to the dropdown, the state
+   is lost, the anchor collapses to 0x0, and the list is clamped to the overlay
+   margin: it teleports to the viewport's top-left corner and the
+   close-on-pointer-leave grace then closes it. The pointer can never catch it.
+   The host's own rows solve exactly this the same way — a state class that keeps
+   the actions laid out while the menu is open (Rows.module.css:
+   .projectRow.menuOpen .rowActions { display: inline-flex }, fed by the
+   menuOpen state in Rows.tsx). Loom had no such class.
+   NO BACKTICKS IN THIS COMMENT: the whole stylesheet is one template literal,
+   and a stray one ends it early — a mistake this file has made before. */
+.loom-row.loom-menu-open .loom-actions,
+.loom-group-head.loom-menu-open .loom-actions { display: inline-flex; }
+/* Pinning the anchor is not enough on its own: the row must keep the WHOLE
+   hover appearance it had when the menu opened. A returned claim badge would
+   change the row's content width and shift the anchor sideways — menu and all —
+   and a returned timestamp would push the actions out from under the pointer.
+   No backticks here either, for the reason stated above. */
+.loom-group-head.loom-menu-open .loom-claimed,
+.loom-row.loom-menu-open .loom-time,
+.loom-group-head.loom-menu-open .loom-time { display: none; }
+.loom-row.loom-menu-open,
+.loom-group-head.loom-menu-open { background: var(--dsw-alias-interactive-bg-hover); }
 .loom-icon-btn {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px; padding: 0; border: none; border-radius: 4px;
@@ -1014,9 +1042,21 @@ function sessionTime(summary, t) {
  *
  * Extracted because session rows and workspace rows both need it, and because
  * it owns the open state — a menu re-created each render loses its anchor.
+ *
+ * `onOpenChange` reports that state to the OWNING ROW, which pins itself with
+ * `loom-menu-open` while it is true. The row has to do the pinning because the
+ * anchor's container is the row's own `.loom-actions`, and a portaled `Menu`
+ * re-measures that anchor every frame (see the stylesheet note).
+ *
+ * Reported through an effect rather than from `onClose` alone: `open` also goes
+ * false on an outside pointerdown, Escape, a window blur, and the pointer-leave
+ * grace, and the effect covers every one of those without enumerating them.
  */
-function RowMenu({ items, onSelect, label }) {
+function RowMenu({ items, onSelect, label, onOpenChange }) {
   const [open, setOpen] = React.useState(false);
+  React.useEffect(() => {
+    if (onOpenChange !== undefined) onOpenChange(open);
+  }, [open, onOpenChange]);
   return h(Menu, {
     open,
     onClose: () => setOpen(false),
@@ -1048,6 +1088,9 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
   // A blank row is provisional: nothing has happened in it, so a timestamp and
   // the row verbs would all act on content that does not exist yet.
   const settled = summary.blank !== true;
+  // While the row menu is open the row pins its own actions, otherwise the
+  // anchor collapses the moment the pointer leaves for the dropdown.
+  const [menuOpen, setMenuOpen] = React.useState(false);
 
   const items = [
     { id: 'rename', label: t('rename'), icon: h(IconEditOutlineRegular, null) },
@@ -1059,7 +1102,11 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
     role: 'treeitem',
     tabIndex: 0,
     'aria-selected': current === true,
-    className: current === true ? 'loom-row loom-row-current' : 'loom-row',
+    className: [
+      'loom-row',
+      current === true ? 'loom-row-current' : '',
+      menuOpen ? 'loom-menu-open' : '',
+    ].filter(part => part.length > 0).join(' '),
     title,
     onClick,
     onKeyDown: event => {
@@ -1079,6 +1126,7 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
       h(RowMenu, {
         label: t('sessionActions'),
         items,
+        onOpenChange: setMenuOpen,
         onSelect: id => {
           if (id === 'rename') onRename(summary.id, title);
           if (id === 'fork') onFork(summary.id);
@@ -1096,10 +1144,13 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
   const shown = showAll ? row.sessions : row.sessions.slice(0, PREVIEW);
   const hidden = row.sessions.length - PREVIEW;
   const claimed = Array.isArray(claimedBy) && claimedBy.length > 0;
+  // See the stylesheet note on `.loom-menu-open`: an open menu must pin the
+  // actions it is anchored to, or the anchor collapses as the pointer leaves.
+  const [menuOpen, setMenuOpen] = React.useState(false);
 
   return h('div', { className: 'loom-group' },
     h('div', {
-      className: 'loom-group-head',
+      className: menuOpen ? 'loom-group-head loom-menu-open' : 'loom-group-head',
       role: 'treeitem',
       'aria-expanded': open,
       onClick: () => onToggleCollapse(row.key),
@@ -1126,6 +1177,7 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
         menu !== undefined && h(RowMenu, {
           label: menu.label,
           items: menu.items,
+          onOpenChange: setMenuOpen,
           onSelect: menu.onSelect,
         }),
         h('button', {
