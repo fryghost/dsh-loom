@@ -9,7 +9,14 @@ var require_bridge = __commonJS({
   "src/core/bridge.cjs"(exports2, module2) {
     var BRIDGE_CHANNEL2 = "/api";
     var BRIDGE_NAMESPACE = "dsh-loom";
-    var BRIDGE_ENDPOINTS = Object.freeze(["getManifest", "putManifest", "preflight", "report"]);
+    var BRIDGE_ENDPOINTS = Object.freeze([
+      "getManifest",
+      "putManifest",
+      "preflight",
+      "report",
+      "planMigration",
+      "migrateSession"
+    ]);
     function bridgePath(endpoint) {
       return `${BRIDGE_CHANNEL2}/${BRIDGE_NAMESPACE}/${endpoint}`;
     }
@@ -114,11 +121,21 @@ var require_sections = __commonJS({
 var require_manifest = __commonJS({
   "src/core/manifest.cjs"(exports2, module2) {
     var SCHEMA_VERSION = 2;
+    var CHATS_CWD = "chatsCwd";
     var ROLE_WRITABLE = "writable";
     var ROLE_READONLY = "readonly";
     var ROLES = [ROLE_WRITABLE, ROLE_READONLY];
     function isPlainObject(value) {
       return typeof value === "object" && value !== null && !Array.isArray(value);
+    }
+    function normalizeChatsCwd(value) {
+      if (typeof value !== "string") return void 0;
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : void 0;
+    }
+    function normalizeComparablePath(value) {
+      if (typeof value !== "string") return "";
+      return value.trim().replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
     }
     function uniqueStrings(values) {
       const seen = /* @__PURE__ */ new Set();
@@ -204,7 +221,13 @@ var require_manifest = __commonJS({
           updatedAt: typeof rawProject.updatedAt === "string" ? rawProject.updatedAt : void 0
         });
       }
-      return { schemaVersion: SCHEMA_VERSION, projects, dropped };
+      const chatsCwd = normalizeChatsCwd(isPlainObject(raw) ? raw[CHATS_CWD] : void 0);
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        projects,
+        ...chatsCwd === void 0 ? {} : { [CHATS_CWD]: chatsCwd },
+        dropped
+      };
     }
     function knownWorkspaceIdsOf(value) {
       return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
@@ -235,13 +258,20 @@ var require_manifest = __commonJS({
       const incoming = normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [project] }, options).projects[0];
       if (incoming === void 0) return normalizeManifest(manifest, options);
       const rest = (manifest?.projects || []).filter((existing) => existing.id !== incoming.id);
-      return normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [...rest, incoming] }, options);
+      return normalizeManifest(
+        withChatsCwd(manifest, { schemaVersion: SCHEMA_VERSION, projects: [...rest, incoming] }),
+        options
+      );
     }
     function removeProject(manifest, projectId) {
-      return normalizeManifest({
+      return normalizeManifest(withChatsCwd(manifest, {
         schemaVersion: SCHEMA_VERSION,
         projects: (manifest?.projects || []).filter((project) => project.id !== projectId)
-      });
+      }));
+    }
+    function withChatsCwd(previous, next) {
+      const chatsCwd = normalizeChatsCwd(previous?.[CHATS_CWD]);
+      return chatsCwd === void 0 ? next : { ...next, [CHATS_CWD]: chatsCwd };
     }
     function migrateFromV1(value) {
       const groups = Array.isArray(value) ? value : isPlainObject(value) ? value.groups : void 0;
@@ -266,23 +296,39 @@ var require_manifest = __commonJS({
         note: "v1-membership-was-exclusive; previously dropped memberships are not recoverable"
       };
     }
+    function chatsFolderOf(manifest) {
+      return normalizeChatsCwd(manifest?.[CHATS_CWD]);
+    }
+    function setChatsFolder(manifest, path) {
+      const chatsCwd = normalizeChatsCwd(path);
+      return normalizeManifest({
+        schemaVersion: SCHEMA_VERSION,
+        projects: manifest?.projects || [],
+        ...chatsCwd === void 0 ? {} : { [CHATS_CWD]: chatsCwd }
+      });
+    }
     function createEmptyManifest() {
       return { schemaVersion: SCHEMA_VERSION, projects: [], dropped: [] };
     }
     module2.exports = {
+      CHATS_CWD,
       ROLE_READONLY,
       ROLE_WRITABLE,
       ROLES,
       SCHEMA_VERSION,
+      chatsFolderOf,
       createEmptyManifest,
       defaultWorkspaceFor,
       findProject,
       mergeMembers: mergeMembers2,
       migrateFromV1,
+      normalizeChatsCwd,
+      normalizeComparablePath,
       normalizeManifest,
       projectsContaining,
       readManifest,
       removeProject,
+      setChatsFolder,
       upsertProject
     };
   }
@@ -306,13 +352,14 @@ var {
   IconTrashOutlineRegular,
   IconBranchOutlineRegular,
   IconArchiveOutlineRegular,
-  IconListPenOutlineRegular
+  IconListPenOutlineRegular,
+  IconShareOutlineRegular
 } = require("@deepseek-ai/dsh-client-ui-primitives");
 var h = React.createElement;
 var NS = "dsh-loom";
 var { BRIDGE_CHANNEL, bridgeEndpoint } = require_bridge();
 var { deriveSections } = require_sections();
-var { mergeMembers } = require_manifest();
+var { mergeMembers, normalizeComparablePath: comparablePath } = require_manifest();
 var dictionaries = {
   zh: {
     projects: "\u9879\u76EE",
@@ -399,7 +446,35 @@ var dictionaries = {
     close: "\u5173\u95ED",
     deleteProjectHint: "\u53EA\u79FB\u9664\u8FD9\u4E2A\u9879\u76EE\u5206\u7EC4\uFF0C\u4E0D\u4F1A\u5220\u9664\u6587\u4EF6\u5939\u6216\u4F1A\u8BDD\u8BB0\u5F55\u3002",
     deleteWorkspaceHint: "\u53EA\u79FB\u9664\u8FD9\u4E2A\u5DE5\u4F5C\u533A\u767B\u8BB0\uFF0C\u4E0D\u4F1A\u5220\u9664\u6587\u4EF6\u5939\u6216\u4F1A\u8BDD\u8BB0\u5F55\u3002",
-    pickFolderFailed: "\u6CA1\u6709\u9009\u62E9\u6587\u4EF6\u5939\u3002"
+    pickFolderFailed: "\u6CA1\u6709\u9009\u62E9\u6587\u4EF6\u5939\u3002",
+    chatsFolder: "\u9ED8\u8BA4\u6587\u4EF6\u5939",
+    setChatsFolder: "\u8BBE\u7F6E\u9ED8\u8BA4\u6587\u4EF6\u5939",
+    clearChatsFolder: "\u6E05\u9664\u9ED8\u8BA4\u6587\u4EF6\u5939",
+    chatsFolderHint: "\u65B0\u5BF9\u8BDD\u4ECE\u8FD9\u91CC\u5F00\u59CB\u3002\u6CA1\u6709\u9ED8\u8BA4\u6587\u4EF6\u5939\u65F6\uFF0C\u70B9 + \u4F1A\u5148\u8BA9\u4F60\u9009\u4E00\u4E2A\u3002",
+    chatsFolderIsWorkspace: "\u8FD9\u4E2A\u6587\u4EF6\u5939\u5DF2\u7ECF\u662F\u5DE5\u4F5C\u533A\uFF0C\u65B0\u4F1A\u8BDD\u4F1A\u5F52\u5230\u8BE5\u5DE5\u4F5C\u533A\u4E0B\uFF0C\u4E0D\u4F1A\u51FA\u73B0\u5728\u300C\u804A\u5929\u300D\u6BB5\u3002",
+    migrate: "\u8FC1\u79FB\u5230\u5176\u4ED6\u5DE5\u4F5C\u533A",
+    migrateTitle: "\u8FC1\u79FB\u5BF9\u8BDD",
+    migrateTarget: "\u76EE\u6807\u5DE5\u4F5C\u533A",
+    migrateNoTarget: "\u6CA1\u6709\u5176\u4ED6\u53EF\u8FC1\u79FB\u7684\u5DE5\u4F5C\u533A",
+    migratePlan: "\u8FC1\u79FB\u65B9\u6848",
+    migrateWillCopy: "\u4F1A\u590D\u5236 {count} \u6761\u5386\u53F2\u4E8B\u4EF6\u5230\u65B0\u4F1A\u8BDD",
+    migrateWillDrop: "\uFF08\u53E6\u6709 {count} \u6761\u672C\u8F6E\u4E8B\u4EF6\u4E0D\u4F1A\u590D\u5236\uFF09",
+    migrateKeepsSource: "\u539F\u4F1A\u8BDD\u4E0D\u4F1A\u88AB\u5220\u9664\uFF0C\u53EA\u4F1A\u5F52\u6863\u2014\u2014\u5F52\u6863\u53EA\u662F\u4ECE\u8FD9\u4E9B\u5217\u8868\u91CC\u6536\u8D77\u6765\u3002",
+    migrateNotBranch: "\u65B0\u4F1A\u8BDD\u662F\u72EC\u7ACB\u7684\u4F1A\u8BDD\uFF0C\u4E0E\u539F\u4F1A\u8BDD\u6CA1\u6709\u5206\u652F\u5173\u8054\u3002",
+    migrateContextFollows: "\u6280\u80FD\u3001\u6307\u4EE4\u6587\u4EF6\u4E0E\u5199\u5165\u8FB9\u754C\u90FD\u4F1A\u8DDF\u968F\u65B0\u6587\u4EF6\u5939\uFF1B\u754C\u9762\u6587\u6848\u968F\u4E4B\u6539\u53D8\u3002",
+    migrateSameTitle: "\u65B0\u4F1A\u8BDD\u6CBF\u7528\u539F\u4F1A\u8BDD\u7684\u6807\u9898\uFF0C\u53EF\u4EE5\u5728\u884C\u83DC\u5355\u91CC\u91CD\u547D\u540D\u3002",
+    migrateRunning: "\u4F1A\u8BDD\u6B63\u5728\u8FD0\u884C\uFF0C\u5148\u505C\u6B62\u518D\u8FC1\u79FB\uFF0C\u5426\u5219\u672B\u5C3E\u7684\u4E8B\u4EF6\u4F1A\u4E22\u5931\u3002",
+    migrateSame: "\u76EE\u6807\u6587\u4EF6\u5939\u4E0E\u539F\u6587\u4EF6\u76F8\u540C\uFF0C\u8FC1\u79FB\u4E0D\u4F1A\u4EA7\u751F\u65B0\u5185\u5BB9\u3002",
+    migrateNoTurn: "\u8FD9\u6761\u4F1A\u8BDD\u8FD8\u6CA1\u6709\u5DF2\u5B8C\u6210\u7684\u56DE\u5408\uFF0C\u6CA1\u6709\u53EF\u590D\u5236\u7684\u5386\u53F2\u3002",
+    migrateNoCwd: "\u8FD9\u6761\u4F1A\u8BDD\u6CA1\u6709\u8BB0\u5F55\u5DE5\u4F5C\u76EE\u5F55\uFF0C\u65E0\u6CD5\u5224\u65AD\u8FC1\u79FB\u76EE\u6807\u3002",
+    migrateSourceMissing: "\u539F\u4F1A\u8BDD\u7684\u65E5\u5FD7\u8BFB\u4E0D\u5230\u4E86\uFF0C\u65E0\u6CD5\u590D\u5236\u3002",
+    migrateWorkspaceMissing: "\u76EE\u6807\u5DE5\u4F5C\u533A\u7684\u6587\u4EF6\u5939\u5F53\u524D\u4E0D\u5B58\u5728\u3002",
+    migrateUnavailable: "\u5F53\u524D\u73AF\u5883\u7F3A\u5C11\u8FC1\u79FB\u6240\u9700\u7684\u7EC4\u4EF6\uFF1A{message}",
+    migrateFailed: "\u8FC1\u79FB\u5931\u8D25\uFF1A{message}",
+    migratePartialArchive: "\u65B0\u4F1A\u8BDD\u5DF2\u521B\u5EFA\uFF0C\u4F46\u539F\u4F1A\u8BDD\u5F52\u6863\u5931\u8D25\uFF1A{message}\u3002\u4E24\u6761\u4F1A\u8BDD\u90FD\u8FD8\u5728\u3002",
+    migrateAttachFailed: "\u65B0\u4F1A\u8BDD\u5DF2\u521B\u5EFA\uFF0C\u4F46\u6CA1\u80FD\u767B\u8BB0\u8FDB\u76EE\u6807\u5DE5\u4F5C\u533A\u3002\u5B83\u4ECD\u4F1A\u663E\u793A\u5728\u90A3\u91CC\uFF08\u4F1A\u8BDD\u8BB0\u5F55\u5728\u76EE\u6807\u6587\u4EF6\u5939\u4E0B\uFF09\uFF0C\u91CD\u542F\u540E\u4F1A\u4E00\u5E76\u5F52\u4F4D\u3002",
+    migrateDone: "\u5DF2\u8FC1\u79FB\u5230 {title}\u3002",
+    migrateOpen: "\u6253\u5F00\u65B0\u4F1A\u8BDD"
   },
   en: {
     projects: "Projects",
@@ -486,7 +561,35 @@ var dictionaries = {
     close: "Close",
     deleteProjectHint: "Removes this grouping only; folders and session logs are kept.",
     deleteWorkspaceHint: "Removes the registration only; folders and session logs are kept.",
-    pickFolderFailed: "No folder was selected."
+    pickFolderFailed: "No folder was selected.",
+    chatsFolder: "Default folder",
+    setChatsFolder: "Set default folder",
+    clearChatsFolder: "Clear default folder",
+    chatsFolderHint: "New chats start here. With no default folder, + asks you to pick one first.",
+    chatsFolderIsWorkspace: "This folder is already a workspace, so new chats join that workspace and will not appear under Chats.",
+    migrate: "Move to another workspace",
+    migrateTitle: "Move conversation",
+    migrateTarget: "Target workspace",
+    migrateNoTarget: "No other workspace to move to",
+    migratePlan: "What will happen",
+    migrateWillCopy: "Copies {count} history events into a new session",
+    migrateWillDrop: " ({count} events from the current turn are not copied)",
+    migrateKeepsSource: "The original is not deleted \u2014 it is archived, which only hides it from these lists.",
+    migrateNotBranch: "The new session is independent; it is not a branch of the original.",
+    migrateContextFollows: "Skills, instruction files, and the write boundary all follow the new folder.",
+    migrateSameTitle: "The new session reuses the original title; rename it from its row menu.",
+    migrateRunning: "The session is running. Stop it first, or the tail of the turn would be lost.",
+    migrateSame: "The target folder is the original one, so a move would change nothing.",
+    migrateNoTurn: "This session has no completed turn, so there is no history to copy.",
+    migrateNoCwd: "This session records no working directory, so there is no move to make.",
+    migrateSourceMissing: "The original session log cannot be read, so nothing can be copied.",
+    migrateWorkspaceMissing: "The target workspace folder does not exist right now.",
+    migrateUnavailable: "This deployment is missing what a move needs: {message}",
+    migrateFailed: "Move failed: {message}",
+    migratePartialArchive: "The new session was created, but archiving the original failed: {message}. Both sessions remain.",
+    migrateAttachFailed: "The new session was created but could not be recorded in the target workspace. It still appears there (its log lives in that folder) and will be accounted for on the next start.",
+    migrateDone: "Moved to {title}.",
+    migrateOpen: "Open the new session"
   }
 };
 var STYLES = `
@@ -766,6 +869,13 @@ var STYLES = `
 }
 .loom-section-title:hover { color: var(--dsw-alias-label-primary); }
 .loom-section-count { font-weight: 500; letter-spacing: 0; }
+/* A band's own actions. NOT the loom-actions class: that one is hidden until
+   its ROW is hovered, which is right for a row whose timestamp it replaces and
+   wrong for a section heading \u2014 the one control that starts a conversation
+   would be invisible at rest. The \u9879\u76EE and \u5DE5\u4F5C\u533A bands have always shown their
+   plus, so this only makes the third band match them.
+   (Never write a backtick in this block \u2014 see the note at the top.) */
+.loom-section-actions { flex: none; display: inline-flex; align-items: center; gap: 12px; }
 
 /* ONE twisty, always visible.
    An earlier version swapped a type icon for the twisty on hover. That read as
@@ -907,7 +1017,20 @@ var STYLES = `
 }
 .loom-more:hover { color: var(--dsw-alias-label-primary); }
 .loom-empty-section { padding: 2px 8px; color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 20px; }
-.loom-warn-note { padding: 2px 8px; color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }`;
+.loom-warn-note { padding: 2px 8px; color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }
+
+/* The migration dialog: a target picker plus the plan it will execute. The plan
+   is a LIST because each line is a separate promise about what will and will
+   not happen \u2014 collapsing them into one paragraph is how a user ends up
+   surprised that "move" actually copied and archived. */
+.loom-migrate { display: flex; flex-direction: column; gap: 16px; }
+.loom-migrate .loom-input { width: 100%; }
+.loom-plan { display: flex; flex-direction: column; gap: 6px; }
+.loom-plan-list {
+  margin: 0; padding-left: 18px;
+  display: flex; flex-direction: column; gap: 4px;
+  color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px;
+}`;
 function installStyles() {
   const id = "loom-styles";
   if (typeof document === "undefined") return () => {
@@ -940,6 +1063,8 @@ function createBridge(ctx) {
     getManifest: () => call("getManifest"),
     putManifest: (manifest) => call("putManifest", { manifest }),
     preflight: (projectId, activeWorkspaceId) => call("preflight", { projectId, activeWorkspaceId }),
+    planMigration: (sessionId, targetWorkspaceId) => call("planMigration", { sessionId, targetWorkspaceId }),
+    migrateSession: (sessionId, targetWorkspaceId) => call("migrateSession", { sessionId, targetWorkspaceId }),
     report: (event) => call("report", event)
   };
 }
@@ -1289,13 +1414,17 @@ function RowMenu({ items, onSelect, label, onOpenChange }) {
     }, h(IconEllipsisOutlineRegular, { size: 16 }))
   });
 }
-function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t }) {
+function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, onMigrate, t }) {
   const title = summary.displayTitle || t("untitled");
   const settled = summary.blank !== true;
   const [menuOpen, setMenuOpen] = React.useState(false);
   const items = [
     { id: "rename", label: t("rename"), icon: h(IconEditOutlineRegular, null) },
     { id: "fork", label: t("fork"), icon: h(IconBranchOutlineRegular, null) },
+    // "Move to another workspace" is a COPY plus an archive, never a rewrite:
+    // DSH stores a session's directory in an immutable header. The dialog
+    // states that before anything happens — see `MigrateModal`.
+    { id: "migrate", label: t("migrate"), icon: h(IconShareOutlineRegular, { size: 16 }) },
     { id: "archive", label: t("archive"), icon: h(IconArchiveOutlineRegular, { size: 16 }) }
   ];
   return h(
@@ -1336,13 +1465,14 @@ function SessionRow({ summary, current, onClick, onRename, onFork, onArchive, t 
         onSelect: (id) => {
           if (id === "rename") onRename(summary.id, title);
           if (id === "fork") onFork(summary.id);
+          if (id === "migrate") onMigrate(summary.id, title);
           if (id === "archive") onArchive(summary.id);
         }
       })
     )
   );
 }
-function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, onRename, onFork, onArchive, currentId, claimedBy, t }) {
+function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollapse, onToggleExpand, onOpen, onNew, onRename, onFork, onArchive, onMigrate, currentId, claimedBy, t }) {
   const open = !isCollapsed;
   const showAll = isExpanded;
   const PREVIEW = 4;
@@ -1417,6 +1547,7 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
         onRename,
         onFork,
         onArchive,
+        onMigrate,
         t
       })),
       hidden > 0 && h("button", {
@@ -1476,9 +1607,13 @@ function LoomSidebar({
   onRenameSession,
   onForkSession,
   onArchiveSession,
+  onMigrateSession,
   onNewWorkspace,
   onRenameWorkspace,
-  onDeleteWorkspace
+  onDeleteWorkspace,
+  chatsCwd,
+  onNewChat,
+  onSetChatsCwd
 }) {
   const [query, setQuery] = React.useState("");
   const [collapsed, setCollapsed] = React.useState(() => /* @__PURE__ */ new Set());
@@ -1515,6 +1650,7 @@ function LoomSidebar({
     onRename: onRenameSession,
     onFork: onForkSession,
     onArchive: onArchiveSession,
+    onMigrate: onMigrateSession,
     // A workspace is the shell's own object, so its verbs are the shell's:
     // rename and delete. Delete unregisters the Workspace without touching
     // Sessions or files, so it is not styled as destructive data loss — but it
@@ -1619,6 +1755,7 @@ function LoomSidebar({
       onRename: onRenameSession,
       onFork: onForkSession,
       onArchive: onArchiveSession,
+      onMigrate: onMigrateSession,
       currentId: derived.highlighted,
       t,
       // One ellipsis, matching the shipped row affordance. The preflight lives
@@ -1650,8 +1787,46 @@ function LoomSidebar({
       }, h(IconPlusOutlineRegular, { size: 16 }))
     ),
     sectionBody("workspaces", () => workspaceRows.length === 0 ? h("div", { className: "loom-empty-section" }, t("noWorkspaces")) : workspaceRows.map(group)),
-    sectionHead("chats", t("sectionChats"), chatSessions.length),
-    sectionBody("chats", () => chatSessions.length === 0 ? h("div", { className: "loom-empty-section" }, t("noChats")) : h(
+    sectionHead(
+      "chats",
+      t("sectionChats"),
+      chatSessions.length,
+      // A section that lists conversations must be able to start one. This is
+      // the ONE section whose sessions have no group row above them (they hang
+      // directly off the band), so the group renderer's own `+` never reaches
+      // them — 项目 and 工作区 each had an entry point and 聊天 had none at all.
+      // The shipped browser has the same gap in its Ungrouped bucket, which
+      // makes "there is nowhere to click" look intended rather than missing.
+      h(
+        "span",
+        { className: "loom-section-actions" },
+        h("button", {
+          type: "button",
+          className: "loom-icon-btn",
+          title: chatsCwd === void 0 ? t("newChat") : `${t("newChat")} \u2014 ${chatsCwd}`,
+          "aria-label": t("newChat"),
+          onClick: () => onNewChat()
+        }, h(IconPlusOutlineRegular, { size: 16 })),
+        // The default folder is a property of this section, so it is edited
+        // from the section rather than from a settings surface elsewhere.
+        h(RowMenu, {
+          label: t("chatsFolder"),
+          items: [
+            { id: "set", label: t("setChatsFolder"), icon: h(IconEditOutlineRegular, null) },
+            ...chatsCwd === void 0 ? [] : [{ id: "clear", label: t("clearChatsFolder"), icon: h(IconTrashOutlineRegular, null), danger: true }]
+          ],
+          onSelect: (id) => {
+            if (id === "set") onSetChatsCwd("pick");
+            if (id === "clear") onSetChatsCwd("clear");
+          }
+        })
+      )
+    ),
+    sectionBody("chats", () => chatSessions.length === 0 ? h(
+      "div",
+      { className: "loom-empty-section" },
+      chatsCwd === void 0 ? `${t("noChats")} \xB7 ${t("chatsFolderHint")}` : `${t("noChats")} \xB7 ${t("chatsFolder")}\uFF1A${chatsCwd}`
+    ) : h(
       "div",
       { className: "loom-children loom-children-section" },
       chatSessions.map((summary) => h(SessionRow, {
@@ -1662,9 +1837,142 @@ function LoomSidebar({
         onRename: onRenameSession,
         onFork: onForkSession,
         onArchive: onArchiveSession,
+        onMigrate: onMigrateSession,
         t
       }))
     ))
+  );
+}
+function MigrateModal({ sessionId, sessionTitle, snapshot, bridge, t, onClose, onDone, onArchive }) {
+  const workspaces = (snapshot?.items ?? []).filter((item) => item.path !== void 0);
+  const source = (snapshot?.items ?? []).find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(sessionId));
+  const candidates = workspaces.filter((item) => item.workspaceId !== source?.workspaceId);
+  const [targetId, setTargetId] = React.useState(candidates[0]?.workspaceId);
+  const [plan, setPlan] = React.useState(void 0);
+  const [busy, setBusy] = React.useState(false);
+  const [failure, setFailure] = React.useState("");
+  React.useEffect(() => {
+    let live = true;
+    if (targetId === void 0) {
+      setPlan(void 0);
+      return () => {
+        live = false;
+      };
+    }
+    setBusy(true);
+    setFailure("");
+    bridge.planMigration(sessionId, targetId).then((value) => {
+      if (live) setPlan(value.plan);
+    }).catch((cause) => {
+      if (live) setFailure(String(cause.message ?? cause));
+    }).finally(() => {
+      if (live) setBusy(false);
+    });
+    return () => {
+      live = false;
+    };
+  }, [bridge, sessionId, targetId]);
+  const reasonText = (reason, message) => {
+    const known = {
+      "source-missing": t("migrateSourceMissing"),
+      "no-cwd": t("migrateNoCwd"),
+      "no-completed-turn": t("migrateNoTurn"),
+      "session-running": t("migrateRunning"),
+      "same-workspace": t("migrateSame"),
+      "no-target": t("migrateNoTarget"),
+      "migration-unavailable": interpolate(t("migrateUnavailable"), { message: message ?? "" }),
+      "migration-target-missing": t("migrateWorkspaceMissing"),
+      "migration-source-unreadable": t("migrateSourceMissing")
+    }[reason];
+    return known ?? interpolate(t("migrateFailed"), { message: reason ?? "" });
+  };
+  const confirm = async () => {
+    if (plan?.available !== true || targetId === void 0) return;
+    setBusy(true);
+    setFailure("");
+    try {
+      const value = await bridge.migrateSession(sessionId, targetId);
+      let archiveError;
+      try {
+        await onArchive(sessionId);
+      } catch (cause) {
+        archiveError = String(cause?.message ?? cause);
+      }
+      onDone({
+        sessionId: value.sessionId,
+        targetTitle: plan.title,
+        copiedEvents: value.copiedEvents,
+        droppedEvents: value.droppedEvents,
+        archiveError,
+        attached: value.attached
+      });
+    } catch (cause) {
+      setFailure(String(cause.message ?? cause));
+    } finally {
+      setBusy(false);
+    }
+  };
+  return h(
+    Modal,
+    {
+      open: true,
+      onClose,
+      title: t("migrateTitle"),
+      description: sessionTitle,
+      closeLabel: t("cancel"),
+      className: "loom-editor",
+      // The Modal atom owns the footer's layout, so the actions are passed as its
+      // `footer` prop rather than wrapped in a container of our own — the same
+      // shape every other dialog here uses. The confirm button is DISABLED while
+      // the plan refuses, and the refusal is stated in the body above it, so a
+      // greyed-out button never has to explain itself.
+      footer: h(
+        React.Fragment,
+        null,
+        h(Button, { variant: "outline", onClick: onClose }, t("cancel")),
+        h(Button, {
+          variant: "primary",
+          disabled: plan?.available !== true || busy,
+          onClick: () => {
+            void confirm();
+          }
+        }, t("migrate"))
+      )
+    },
+    candidates.length === 0 ? h("div", { className: "loom-muted" }, t("migrateNoTarget")) : h(
+      "div",
+      { className: "loom-migrate" },
+      h(
+        "div",
+        { className: "loom-field" },
+        h("span", { className: "loom-field-label" }, t("migrateTarget")),
+        h("select", {
+          className: "loom-input",
+          value: targetId ?? "",
+          "aria-label": t("migrateTarget"),
+          onChange: (event) => setTargetId(event.target.value)
+        }, candidates.map((item) => h("option", {
+          key: item.workspaceId,
+          value: item.workspaceId
+        }, `${item.title || item.path} \u2014 ${item.path}`)))
+      ),
+      busy && plan === void 0 && h("div", { className: "loom-muted" }, t("running")),
+      plan !== void 0 && h(
+        "div",
+        { className: "loom-plan" },
+        h("div", { className: "loom-field-label" }, t("migratePlan")),
+        plan.available === true ? h(
+          "ul",
+          { className: "loom-plan-list" },
+          h("li", null, interpolate(t("migrateWillCopy"), { count: plan.copiedEvents }) + (plan.droppedEvents > 0 ? interpolate(t("migrateWillDrop"), { count: plan.droppedEvents }) : "")),
+          h("li", null, t("migrateKeepsSource")),
+          h("li", null, t("migrateNotBranch")),
+          h("li", null, t("migrateContextFollows")),
+          h("li", null, t("migrateSameTitle"))
+        ) : h("div", { className: "loom-warn" }, reasonText(plan.reason, plan.message))
+      ),
+      failure.length > 0 && h("div", { className: "loom-warn" }, failure)
+    )
   );
 }
 function LoomSidebarHost({ bridge, ctx }) {
@@ -1673,13 +1981,18 @@ function LoomSidebarHost({ bridge, ctx }) {
     const sessionState = useSessions((state) => state);
     const [panelActive, setPanelActive] = React.useState(false);
     const [manifest, setManifest] = React.useState(void 0);
+    const manifestRef = React.useRef(void 0);
     const [error, setError] = React.useState("");
+    const [notice, setNotice] = React.useState("");
     const [editing, setEditing] = React.useState(null);
     const [renaming, setRenaming] = React.useState(null);
     const [preflighting, setPreflighting] = React.useState(null);
+    const [migrating, setMigrating] = React.useState(null);
+    const [migrated, setMigrated] = React.useState(null);
     const reload = React.useCallback(async () => {
       try {
         const value = await bridge2.getManifest();
+        manifestRef.current = value.manifest;
         setManifest(value.manifest);
         setError(value.ok === false ? String(value.error ?? "") : "");
       } catch (cause) {
@@ -1689,20 +2002,66 @@ function LoomSidebarHost({ bridge, ctx }) {
     React.useEffect(() => {
       void reload();
     }, [reload]);
-    const put = React.useCallback(async (projects2) => {
+    const put = React.useCallback(async (patch) => {
       try {
-        const value = await bridge2.putManifest({ schemaVersion: 2, projects: projects2 });
+        const current = manifestRef.current ?? {};
+        const value = await bridge2.putManifest({
+          schemaVersion: 2,
+          ...current,
+          ...patch,
+          projects: patch.projects ?? current.projects ?? []
+        });
+        manifestRef.current = value.manifest;
         setManifest(value.manifest);
       } catch (cause) {
         setError(interpolate(t("saveFailed"), { message: cause.message }));
       }
     }, [bridge2, t]);
     const projects = manifest?.projects ?? [];
+    const chatsCwd = typeof manifest?.chatsCwd === "string" ? manifest.chatsCwd : void 0;
+    const workspaceForPath = (path) => (snapshot?.items ?? []).find((item) => comparablePath(item.path) === comparablePath(path));
+    const startChat = React.useCallback(async () => {
+      const navigation = ctx2.get("uiWorkspace");
+      if (navigation === void 0) return;
+      try {
+        let target = chatsCwd;
+        if (target === void 0) {
+          const picked = await navigation.pickDirectory();
+          if (typeof picked !== "string" || picked.length === 0) return;
+          target = picked;
+          await put({ chatsCwd: picked });
+        }
+        const workspace = workspaceForPath(target);
+        if (workspace !== void 0) {
+          navigation.startSession(workspace.workspaceId);
+          return;
+        }
+        const sessionId = await ctx2.sessions.create({ cwd: target });
+        navigation.openSession(sessionId);
+      } catch (cause) {
+        setError(interpolate(t("saveFailed"), { message: cause.message }));
+      }
+    }, [ctx2, chatsCwd, put, t]);
+    const setChatsFolder = React.useCallback(async (explicit) => {
+      try {
+        const picked = explicit ?? await ctx2.get("uiWorkspace")?.pickDirectory();
+        if (typeof picked !== "string" || picked.length === 0) return;
+        await put({ chatsCwd: picked });
+        setNotice(workspaceForPath(picked) === void 0 ? "" : t("chatsFolderIsWorkspace"));
+      } catch (cause) {
+        setError(interpolate(t("saveFailed"), { message: cause.message }));
+      }
+    }, [ctx2, put, t]);
+    const clearChatsFolder = React.useCallback(() => {
+      setNotice("");
+      void put({ chatsCwd: void 0 });
+    }, [put]);
     return h(
       React.Fragment,
       null,
       usePanelInfo !== void 0 && h(PanelSeatProbe, { usePanelInfo, onChange: setPanelActive }),
       error.length > 0 && h("div", { className: "loom-empty-section loom-warn" }, error),
+      notice.length > 0 && h("div", { className: "loom-empty-section loom-muted" }, notice),
       h(LoomSidebar, {
         projects,
         snapshot,
@@ -1729,9 +2088,19 @@ function LoomSidebarHost({ bridge, ctx }) {
         onNewProject: () => setEditing({}),
         onEditProject: (project) => setEditing(project),
         onDeleteProject: (project) => {
-          void put(projects.filter((item) => item.id !== project.id));
+          void put({ projects: projects.filter((item) => item.id !== project.id) });
         },
         onPreflightProject: (project) => setPreflighting(project),
+        // The 聊天 section's own entry point and its default folder.
+        chatsCwd,
+        onNewChat: () => {
+          void startChat();
+        },
+        onSetChatsCwd: (verb) => {
+          if (verb === "clear") clearChatsFolder();
+          else void setChatsFolder(void 0);
+        },
+        onMigrateSession: (id, title) => setMigrating({ id, title }),
         // Session verbs. `rename` is a per-session property, not a list verb, so
         // it resolves the session binding first — the list store has no rename.
         onRenameSession: (sessionId, currentTitle) => setRenaming({ kind: "session", id: sessionId, title: currentTitle }),
@@ -1813,11 +2182,76 @@ function LoomSidebarHost({ bridge, ctx }) {
         project: editing.id === void 0 ? void 0 : editing,
         workspaces: snapshot?.items ?? [],
         onSave: (project) => {
-          void put([...projects.filter((item) => item.id !== project.id), project]);
+          void put({ projects: [...projects.filter((item) => item.id !== project.id), project] });
         },
         onClose: () => setEditing(null),
         t
-      })
+      }),
+      migrating !== null && h(MigrateModal, {
+        sessionId: migrating.id,
+        sessionTitle: migrating.title,
+        snapshot,
+        bridge: bridge2,
+        t,
+        onClose: () => setMigrating(null),
+        // Archiving is attempted by the dialog so a failure is reported beside
+        // the copy that DID succeed, rather than discarding that fact.
+        onArchive: (sessionId) => {
+          const navigation = ctx2.get("uiWorkspace");
+          if (navigation === void 0) throw new Error("uiWorkspace is unavailable");
+          return navigation.archiveSession(sessionId);
+        },
+        onDone: (result) => {
+          setMigrating(null);
+          setMigrated(result);
+        }
+      }),
+      // The result is a dialog of its own, because the two things it must
+      // report — "the new session exists" and "the original may still be
+      // listed" — are true together and need more than a toast's worth of room.
+      migrated !== null && h(
+        Modal,
+        {
+          open: true,
+          onClose: () => setMigrated(null),
+          title: t("migrateTitle"),
+          description: interpolate(t("migrateDone"), { title: migrated.targetTitle }),
+          closeLabel: t("close"),
+          footer: h(
+            React.Fragment,
+            null,
+            h(Button, { variant: "outline", onClick: () => setMigrated(null) }, t("close")),
+            h(Button, {
+              variant: "primary",
+              onClick: () => {
+                const navigation = ctx2.get("uiWorkspace");
+                const target = migrated.sessionId;
+                setMigrated(null);
+                if (navigation !== void 0) navigation.openSession(target);
+              }
+            }, t("migrateOpen"))
+          )
+        },
+        h(
+          "div",
+          { className: "loom-plan" },
+          h("div", null, interpolate(t("migrateWillCopy"), { count: migrated.copiedEvents }) + (migrated.droppedEvents > 0 ? interpolate(t("migrateWillDrop"), { count: migrated.droppedEvents }) : "")),
+          h("div", null, t("migrateSameTitle")),
+          h("div", null, t("migrateContextFollows")),
+          // Partial successes are stated, never swallowed: both sessions exist.
+          migrated.archiveError !== void 0 && h(
+            "div",
+            { className: "loom-warn" },
+            interpolate(t("migratePartialArchive"), { message: migrated.archiveError })
+          ),
+          // Attaching failed, but the copy exists AND its cwd already equals
+          // the target path — so Loom's own "resident" rule still lists it
+          // under that workspace. Saying what is true beats either silence or
+          // the plan's generic sentence, which was here before and described
+          // the wrong thing entirely.
+          migrated.attached === false && h("div", { className: "loom-warn-note" }, t("migrateAttachFailed"))
+        )
+      )
     );
   }
   return function LoomSidebarBound(props) {
@@ -1881,6 +2315,7 @@ function apply(ctx) {
 module.exports = {
   LoomSidebar,
   LoomSidebarHost,
+  MigrateModal,
   PreflightModal,
   PreflightPanel,
   ProjectEditor,

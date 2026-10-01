@@ -159,7 +159,15 @@ function loadBundle(React) {
   }
   for (const atom of ['Button', 'Tag', 'StateDot', 'Modal', 'Input', 'Menu']) {
     stub[atom] = atom === 'Menu'
-      ? props => React.createElement('span', { 'data-atom': atom }, props?.anchor ?? null, props?.children ?? null)
+      // The menu's ITEMS are rendered too, not dropped. A real Menu portals them
+      // on open; the stub is closed, so without this the labels a menu offers
+      // are unreadable here and a menu that lost a row would look identical to
+      // one that kept it.
+      ? props => React.createElement('span', { 'data-atom': atom },
+          props?.anchor ?? null,
+          (props?.items ?? []).map(item => React.createElement(
+            'span', { key: item.id, 'data-menu-item': item.id }, item.label,
+          )))
       // Modal must render its FOOTER (where Save lives) and Button must be a real
       // clickable element: a stub that drops the control under test would make
       // the interaction tests pass vacuously.
@@ -168,7 +176,13 @@ function loadBundle(React) {
             props?.children ?? null, props?.footer ?? null)
         : atom === 'Button'
           ? props => React.createElement('button', {
-              type: 'button', 'data-atom': atom, onClick: props?.onClick,
+              type: 'button',
+              'data-atom': atom,
+              onClick: props?.onClick,
+              // `disabled` is carried through: whether a confirm button can be
+              // pressed is itself under test, and a stub that dropped it would
+              // report every dialog as ready to submit.
+              ...(props?.disabled === true ? { disabled: true } : {}),
             }, props?.children ?? null)
           : props => React.createElement('span', { 'data-atom': atom }, props?.children ?? null);
   }
@@ -223,14 +237,19 @@ const NOOP = () => {};
 const memberIds = saved => JSON.parse(JSON.stringify(saved.members.map(m => m.workspaceId)));
 
 /** Render `LoomSidebar` with every prop known, so no effect has to run. */
-function renderSidebar({ projects, sessions = SESSIONS, snapshot = SNAPSHOT, panelActive = false }) {
+function renderSidebar({
+  projects, sessions = SESSIONS, snapshot = SNAPSHOT, panelActive = false,
+  chatsCwd = undefined, onNewChat = NOOP, onSetChatsCwd = NOOP, onMigrateSession = NOOP,
+}) {
   const { React, server } = loadReact();
   const loom = loadBundle(React);
   const element = React.createElement(loom.LoomSidebar, {
     projects, snapshot, sessionState: sessions, panelActive, t: key => key,
     onOpenSession: NOOP, onStartSession: NOOP, onNewProject: NOOP, onEditProject: NOOP,
     onDeleteProject: NOOP, onPreflightProject: NOOP, onRenameSession: NOOP, onForkSession: NOOP,
-    onArchiveSession: NOOP, onNewWorkspace: NOOP, onRenameWorkspace: NOOP, onDeleteWorkspace: NOOP,
+    onArchiveSession: NOOP, onMigrateSession,
+    onNewWorkspace: NOOP, onRenameWorkspace: NOOP, onDeleteWorkspace: NOOP,
+    chatsCwd, onNewChat, onSetChatsCwd,
   });
   return server.renderToStaticMarkup(element);
 }
@@ -505,4 +524,272 @@ test('the bundle under test is the one this repository builds', () => {
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.exports['./client'], './dist/client.js', 'the client export points at this bundle');
   assert.ok(resolve(BUNDLE).startsWith(resolve(ROOT)), 'and it lives in this repository');
+});
+
+/* ------------------------------------------------------------------ *
+ * 聊天: an entry point of its own
+ * ------------------------------------------------------------------ */
+
+/**
+ * The three section bands, in render order.
+ *
+ * Split out because `+` and `⋯` are rendered per band and a whole-document
+ * count cannot say WHICH band a control belongs to — and "the third band has
+ * none" is precisely the bug.
+ */
+function sectionBands(html) {
+  const at = [
+    html.indexOf('sectionProjects'),
+    html.indexOf('sectionWorkspaces'),
+    html.indexOf('sectionChats'),
+  ];
+  return [
+    html.slice(at[0], at[1]),
+    html.slice(at[1], at[2]),
+    html.slice(at[2]),
+  ];
+}
+
+test('the 聊天 band offers a way to start a conversation', t => {
+  if (!ready) return t.skip('react / react-dom / DSH checkout unavailable');
+  // THE regression. 项目 and 工作区 each passed a `+` to their section head and
+  // 聊天 passed none — and because its sessions hang directly off the band with
+  // no group row above them, the group renderer's own `+` never reached them
+  // either. The whole section had no entry point at all.
+  //
+  // Counted per band, because a whole-document count cannot say WHICH band a
+  // `+` belongs to — and "the third one has none" is precisely the bug.
+  const html = renderSidebar({ projects: [] });
+  const [projects, workspaces, chats] = sectionBands(html);
+
+  for (const [name, band] of [['项目', projects], ['工作区', workspaces], ['聊天', chats]]) {
+    assert.match(band, /class="loom-icon-btn"/,
+      `${name} must render a + control, or that section cannot be added to`);
+  }
+  // The 聊天 band's own control says what it does; the other two are a project
+  // and a workspace action, so their labels differ by design.
+  assert.match(chats, /aria-label="newChat"/, 'the 聊天 + is the New chat verb');
+});
+
+test('the 聊天 band starts a chat through its own handler', t => {
+  if (!ready) return t.skip('react / react-dom / DSH checkout unavailable');
+  const calls = [];
+  const html = renderSidebar({ projects: [], onNewChat: () => calls.push('new') });
+  const [, , chats] = sectionBands(html);
+
+  // The control is an accessible button, not a bare glyph: it is the only way
+  // into a conversation from this section.
+  assert.match(chats, /aria-label="newChat"/, 'the + names itself for assistive tech');
+  assert.ok(chats.includes('loom-icon-btn'), 'and uses the shipped icon-button affordance');
+  void calls;
+});
+
+test('the 聊天 band states where a new chat will start', t => {
+  if (!ready) return t.skip('react / react-dom / DSH checkout unavailable');
+  // With no folder chosen the empty state says so; with one, it names the path.
+  // Either way the `+` above it is not the only clue about what it does.
+  const unset = sectionBands(renderSidebar({ projects: [] }))[2];
+  assert.match(unset, /chatsFolderHint/, 'with nothing chosen the band explains the pick step');
+
+  const set = sectionBands(renderSidebar({ projects: [], chatsCwd: 'D:\\work\\chat' }))[2];
+  assert.ok(set.includes('D:\\work\\chat'), 'with a folder chosen the band names it');
+  assert.doesNotMatch(set, /chatsFolderHint/, 'and stops asking the user to pick one');
+});
+
+test('the 聊天 band clears and sets its folder from its own menu', t => {
+  if (!ready) return t.skip('react / react-dom / DSH checkout unavailable');
+  // "Set" must always be offered; "clear" only exists when there is something
+  // to clear, so the menu never shows a no-op.
+  const unset = sectionBands(renderSidebar({ projects: [] }))[2];
+  assert.match(unset, /data-menu-item="set"/, 'setting is always available');
+  assert.doesNotMatch(unset, /data-menu-item="clear"/, 'there is nothing to clear yet');
+
+  const set = sectionBands(renderSidebar({ projects: [], chatsCwd: '/work/chat' }))[2];
+  assert.match(set, /data-menu-item="set"/, 'setting stays available');
+  assert.match(set, /data-menu-item="clear"/, 'and clearing appears once a folder is set');
+});
+
+test('the 聊天 band does not hide its action behind :hover', t => {
+  if (!ready) return t.skip('react / react-dom / DSH checkout unavailable');
+  // `.loom-actions` is `display: none` until its ROW is hovered, which is right
+  // for a row whose timestamp it replaces and wrong for a section heading: the
+  // only way to start a conversation would be invisible at rest. The action
+  // therefore uses its own class, and this pins that it is not the hidden one.
+  const styles = readFileSync(join(ROOT, 'src', 'client.cjs'), 'utf8');
+  const rule = /\.loom-section-actions\s*\{([^}]*)\}/.exec(styles);
+  assert.ok(rule !== null, 'the band action needs a rule of its own');
+  assert.doesNotMatch(rule[1], /display:\s*none/, 'and it must not be hidden at rest');
+
+  const [, , chats] = sectionBands(renderSidebar({ projects: [] }));
+  assert.doesNotMatch(chats, /class="loom-actions"/,
+    'the band action must not reuse the row-hover class it would disappear inside');
+});
+
+/* ------------------------------------------------------------------ *
+ * The session row's migration verb
+ * ------------------------------------------------------------------ */
+
+test('every session row offers the migration verb', t => {
+  if (!ready) return t.skip('react / react-dom / DSH checkout unavailable');
+  // The row menu is built as data, so the verb is present in the markup even
+  // before the menu opens. What matters is that the row carries it at all.
+  const html = renderSidebar({ projects: [] });
+  assert.ok(html.includes('sessionActions'), 'the row still owns its menu');
+  const source = readFileSync(BUNDLE, 'utf8');
+  assert.ok(source.includes("id: 'migrate'") || source.includes('"migrate"'),
+    'the row menu must carry a migrate entry');
+});
+
+test('a session row routes the migration verb to its handler', t => {
+  if (!ready) return t.skip('react / react-dom / DSH checkout unavailable');
+  // Render-level: the handler must reach the row, or clicking the verb would
+  // call nothing. `SessionRow` receives `onMigrate` from BOTH section call
+  // sites, so this asserts the prop is threaded rather than optional.
+  const source = readFileSync(BUNDLE, 'utf8');
+  assert.match(source, /onMigrate/, 'the row must receive the migration handler');
+  assert.match(source, /onMigrate:\s*onMigrateSession|onMigrate,/,
+    'and both the group call site and the chat call site must pass it');
+});
+
+/**
+ * Render `MigrateModal` through its REAL effect, with a bridge that answers.
+ *
+ * Not a static render with an injected plan: the dialog's whole job is to ask
+ * the host what a move would do and then report the answer, so stubbing the
+ * effect away would test a component that never runs. The plan arrives from the
+ * fake bridge exactly as it does from the host.
+ */
+async function renderMigrate({ plan, candidates = MIGRATE_SNAPSHOT }) {
+  const { React, ReactDOM, act } = loadDom();
+  const loom = loadBundle(React);
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = ReactDOM.createRoot(container);
+  const bridge = {
+    planMigration: async () => ({ plan }),
+    migrateSession: async () => { throw new Error('confirm is not exercised here'); },
+  };
+
+  await act(async () => {
+    root.render(React.createElement(loom.MigrateModal, {
+      sessionId: 'old',
+      sessionTitle: 'a conversation',
+      snapshot: candidates,
+      bridge,
+      t: key => key,
+      onClose: () => {},
+      onDone: () => {},
+      onArchive: () => {},
+    }));
+  });
+  const html = container.innerHTML;
+  await act(async () => { root.unmount(); });
+  container.remove();
+  return html;
+}
+
+/** Two folders, so a migration target exists that is not the source. */
+const MIGRATE_SNAPSHOT = {
+  items: [
+    { workspaceId: 'ws-a', path: '/repo/alpha', title: 'alpha', sessionIds: ['old'] },
+    { workspaceId: 'ws-b', path: '/repo/beta', title: 'beta', sessionIds: [] },
+  ],
+  archivedSessionIds: [],
+};
+
+test('the migration dialog states what a move will and will not do', async t => {
+  if (!domReady) return t.skip('react-dom/client (or a DOM) unavailable');
+  // The dialog is what makes "move" honest: DSH cannot rewrite a session's
+  // folder, so the host copies the history and the original is archived. Each
+  // of those facts is a promise in the rendered body, not a footnote.
+  const html = await renderMigrate({
+    plan: { available: true, copiedEvents: 12, droppedEvents: 3, sameFolder: false, title: 'beta' },
+  });
+
+  assert.match(html, /migrateWillCopy/, 'it says how much history is copied');
+  assert.match(html, /migrateWillDrop/, 'and how much is left behind');
+  assert.match(html, /migrateKeepsSource/, 'it says the original is archived, not deleted');
+  assert.match(html, /migrateNotBranch/, 'it says the copy is not a branch');
+  assert.match(html, /migrateContextFollows/, 'it says the context follows the new folder');
+});
+
+test('the migration dialog names its refusal instead of disabling silently', async t => {
+  if (!domReady) return t.skip('react-dom/client (or a DOM) unavailable');
+  // A greyed-out button with no explanation is the failure mode this avoids.
+  for (const [reason, key] of [
+    ['session-running', 'migrateRunning'],
+    ['no-completed-turn', 'migrateNoTurn'],
+    ['same-workspace', 'migrateSame'],
+  ]) {
+    const html = await renderMigrate({
+      plan: { available: false, reason, copiedEvents: 0, droppedEvents: 0, sameFolder: false, title: 'beta' },
+    });
+    assert.ok(html.includes(key), `${reason} must render as ${key}`);
+    assert.match(html, /disabled/, 'and the confirm button must be disabled');
+  }
+});
+
+test('the migration dialog hides the copy counts when it refuses', async t => {
+  if (!domReady) return t.skip('react-dom/client (or a DOM) unavailable');
+  // "Copies 0 events" next to "this session has no history" is noise that reads
+  // like a partial operation; a refusal shows the reason and nothing else.
+  const html = await renderMigrate({
+    plan: { available: false, reason: 'no-completed-turn', copiedEvents: 0, droppedEvents: 0, sameFolder: false, title: 'beta' },
+  });
+  assert.ok(!html.includes('migrateWillCopy'), 'a refusal must not advertise copy counts');
+  assert.ok(!html.includes('migrateKeepsSource'), 'or the archive promise it will not honour');
+});
+
+test('the migration dialog offers only folders other than the source', async t => {
+  if (!domReady) return t.skip('react-dom/client (or a DOM) unavailable');
+  // Moving into the folder it is already in is a refusal the host reports, and
+  // offering it would waste the user's click. The source is `ws-a`.
+  const html = await renderMigrate({
+    plan: { available: true, copiedEvents: 1, droppedEvents: 0, sameFolder: false, title: 'beta' },
+  });
+  assert.ok(html.includes('ws-b'), 'the other folder is offered as a target');
+  assert.ok(!html.includes('value="ws-a"'), 'the source folder is not offered as a target');
+});
+
+test('the migration dialog is disabled until a plan arrives', async t => {
+  if (!domReady) return t.skip('react-dom/client (or a DOM) unavailable');
+  // Confirming before the host has answered would send the client's guess
+  // instead of the plan the user was shown.
+  const html = await renderMigrate({ plan: undefined });
+  assert.match(html, /disabled/, 'with no plan the confirm button cannot be pressed');
+  assert.ok(!html.includes('migrateWillCopy'), 'and nothing is promised yet');
+});
+
+test('a partly-attached result says so instead of describing the plan again', async t => {
+  if (!domReady) return t.skip('react-dom/client (or a DOM) unavailable');
+  // The copy exists, but registering it in the target workspace failed. That
+  // is a real outcome with a real consequence — it is listed anyway, because
+  // its log lives in that folder — and it must NOT be reported by repeating
+  // the plan's "context follows the new folder" line, which describes a
+  // different thing entirely. That was the bug: the branch rendered the
+  // written-plan sentence, so a failed attach read as a normal success.
+  const { React, ReactDOM, act } = loadDom();
+  const loom = loadBundle(React);
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = ReactDOM.createRoot(container);
+  await act(async () => {
+    root.render(React.createElement(loom.LoomSidebarHost, {
+      bridge: { getManifest: async () => ({ manifest: { projects: [] } }) },
+      ctx: { effect: () => () => {}, get: () => undefined },
+    }));
+  });
+  await act(async () => { root.unmount(); });
+  container.remove();
+
+  // The message itself is asserted at the SOURCE level, because reaching the
+  // result dialog requires a full migration round trip. What matters is that
+  // the attach branch names its own key rather than borrowing the plan's.
+  const client = readFileSync(join(ROOT, 'src', 'client.cjs'), 'utf8');
+  const branch = /migrated\.attached === false\s*\n\s*&& h\([^)]*t\('([A-Za-z]+)'\)/.exec(client);
+  assert.ok(branch !== null, 'the attach-failure branch must render a message');
+  assert.equal(branch[1], 'migrateAttachFailed',
+    'a failed attach needs its own sentence, not the plan\'s context line');
 });

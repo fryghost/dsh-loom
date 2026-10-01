@@ -22,6 +22,24 @@
 
 const SCHEMA_VERSION = 2;
 
+/**
+ * Where a 聊天 conversation with no folder of its own starts.
+ *
+ * `chatsCwd` is an ADDITIVE OPTIONAL key, and that is exactly why it does NOT
+ * bump {@link SCHEMA_VERSION}. The version gate answers one question — "can this
+ * build interpret every field it is about to read?" — and an extra optional key
+ * changes no existing field's meaning. Raising it to 3 would make every older
+ * Loom render the WHOLE manifest as `supported: false`, i.e. the user would
+ * open the sidebar and find no projects at all. The trade is therefore:
+ * an older build drops this one preference (and the user re-picks a folder,
+ * one click), versus an older build showing an empty 项目 section. The first is
+ * recoverable, the second looks like data loss.
+ *
+ * `normalizeManifest` tolerates the unknown key on read for the same reason it
+ * always has: an unrecognized key is dropped, never guessed at.
+ */
+const CHATS_CWD = 'chatsCwd';
+
 /** Membership roles describe what a folder contributes, not how it ranks. */
 const ROLE_WRITABLE = 'writable';
 const ROLE_READONLY = 'readonly';
@@ -30,6 +48,39 @@ const ROLES = [ROLE_WRITABLE, ROLE_READONLY];
 
 function isPlainObject(value) {
   return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Normalize the optional default chat folder.
+ *
+ * Deliberately lenient: any non-blank string is kept. Requiring an absolute
+ * path here would mean a relative or otherwise unusual value is silently
+ * DROPPED — and a dropped preference is indistinguishable, from the UI, from
+ * one the user never set. The host resolves and validates the directory when a
+ * conversation is actually created, which is where a bad path is actionable.
+ */
+function normalizeChatsCwd(value) {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+/**
+ * A path spelling that survives the two ways the same folder is written twice.
+ *
+ * Used ONLY for the "is this chosen folder already a registered workspace?"
+ * hint in the picker — never for attribution. Attribution stays DSH's own exact
+ * equality rule (see `./sections.cjs`), because a fuzzy match here would file a
+ * conversation under a workspace DSH itself does not consider it to be in.
+ *
+ * Lowercasing unconditionally follows `isSameOrInside` in `../index.js`, which
+ * already makes this trade for skill-root matching; on a case-sensitive
+ * filesystem the effect is limited to a possible extra hint, never a wrong
+ * grouping, since the hint only chooses which DSH verb is called.
+ */
+function normalizeComparablePath(value) {
+  if (typeof value !== 'string') return '';
+  return value.trim().replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
 }
 
 function uniqueStrings(values) {
@@ -176,7 +227,14 @@ function normalizeManifest(raw, options = {}) {
     });
   }
 
-  return { schemaVersion: SCHEMA_VERSION, projects, dropped };
+  const chatsCwd = normalizeChatsCwd(isPlainObject(raw) ? raw[CHATS_CWD] : undefined);
+
+  return {
+    schemaVersion: SCHEMA_VERSION,
+    projects,
+    ...chatsCwd === undefined ? {} : { [CHATS_CWD]: chatsCwd },
+    dropped,
+  };
 }
 
 function knownWorkspaceIdsOf(value) {
@@ -237,14 +295,31 @@ function upsertProject(manifest, project, options = {}) {
   const incoming = normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [project] }, options).projects[0];
   if (incoming === undefined) return normalizeManifest(manifest, options);
   const rest = (manifest?.projects || []).filter(existing => existing.id !== incoming.id);
-  return normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [...rest, incoming] }, options);
+  return normalizeManifest(
+    withChatsCwd(manifest, { schemaVersion: SCHEMA_VERSION, projects: [...rest, incoming] }),
+    options,
+  );
 }
 
 function removeProject(manifest, projectId) {
-  return normalizeManifest({
+  return normalizeManifest(withChatsCwd(manifest, {
     schemaVersion: SCHEMA_VERSION,
     projects: (manifest?.projects || []).filter(project => project.id !== projectId),
-  });
+  }));
+}
+
+/**
+ * Carry a whole-manifest preference across a rebuild of one part of it.
+ *
+ * `chatsCwd` belongs to the manifest, not to any project, so an edit that
+ * rebuilds the PROJECT list has no opinion about it. Spreading it through is
+ * what keeps "rename a project" from also clearing where new chats start —
+ * the same class of silent, unrelated loss that `mergeMembers` exists to
+ * prevent for a member's role.
+ */
+function withChatsCwd(previous, next) {
+  const chatsCwd = normalizeChatsCwd(previous?.[CHATS_CWD]);
+  return chatsCwd === undefined ? next : { ...next, [CHATS_CWD]: chatsCwd };
 }
 
 /**
@@ -284,23 +359,53 @@ function migrateFromV1(value) {
   };
 }
 
+/**
+ * The folder a 聊天 conversation with no folder of its own starts in.
+ *
+ * A *starting point* preference, exactly like `defaultWorkspaceFor`: it decides
+ * where a NEW conversation begins and nothing else. It never makes an existing
+ * conversation change section — 聊天 stays "no registered workspace accounts
+ * for this cwd", which is a live fact about the session, not a per-user setting.
+ *
+ * @param manifest - a normalized manifest.
+ * @returns the configured path, or undefined when the user has not set one.
+ */
+function chatsFolderOf(manifest) {
+  return normalizeChatsCwd(manifest?.[CHATS_CWD]);
+}
+
+/** A copy of `manifest` with the default chat folder set, replaced, or cleared. */
+function setChatsFolder(manifest, path) {
+  const chatsCwd = normalizeChatsCwd(path);
+  return normalizeManifest({
+    schemaVersion: SCHEMA_VERSION,
+    projects: manifest?.projects || [],
+    ...chatsCwd === undefined ? {} : { [CHATS_CWD]: chatsCwd },
+  });
+}
+
 function createEmptyManifest() {
   return { schemaVersion: SCHEMA_VERSION, projects: [], dropped: [] };
 }
 
 module.exports = {
+  CHATS_CWD,
   ROLE_READONLY,
   ROLE_WRITABLE,
   ROLES,
   SCHEMA_VERSION,
+  chatsFolderOf,
   createEmptyManifest,
   defaultWorkspaceFor,
   findProject,
   mergeMembers,
   migrateFromV1,
+  normalizeChatsCwd,
+  normalizeComparablePath,
   normalizeManifest,
   projectsContaining,
   readManifest,
   removeProject,
+  setChatsFolder,
   upsertProject,
 };

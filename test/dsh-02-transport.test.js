@@ -236,14 +236,33 @@ test('Loom answers the browser transport through the real shared Fetch handler',
 
     // `putManifest` runs before `preflight` because the preflight reads the
     // manifest back from disk; this is the client's own order too.
+    //
+    // The migration pair is exercised too, but with a DIFFERENT expectation:
+    // this composition mounts no `sessionQuery`/`workspaceRegistry`/`agents`,
+    // and Loom's host half is required to degrade into a structured failure
+    // rather than refuse to load. Asserting `ok: true` there would demand
+    // services the fixture deliberately lacks; asserting a well-formed
+    // ENVELOPE is what actually pins the transport, and it doubles as the
+    // degradation contract.
     const payloads = {
       getManifest: {},
       putManifest: { manifest: { schemaVersion: 2, projects: [{ id: 'p1', title: 'Probe', members: [] }] } },
       preflight: { projectId: 'p1' },
       report: { event: 'probe' },
+      planMigration: { sessionId: 'session-probe', targetWorkspaceId: 'ws-probe' },
+      migrateSession: { sessionId: 'session-probe', targetWorkspaceId: 'ws-probe' },
     };
     for (const endpoint of BRIDGE_ENDPOINTS) {
+      assert.ok(endpoint in payloads, `${endpoint} needs a payload here, or the loop below calls it blind`);
       const result = await rpc.call(BRIDGE_CHANNEL, bridgeEndpoint(endpoint), payloads[endpoint]);
+      if (endpoint === 'planMigration' || endpoint === 'migrateSession') {
+        assert.equal(result.ok, false, `${endpoint} cannot succeed without a session query service`);
+        assert.equal(result.error.code, 'migration-unavailable',
+          `${endpoint} must name the missing capability instead of failing opaquely`);
+        assert.ok(typeof result.error.message === 'string' && result.error.message.length > 0,
+          'a degraded answer still has to say what is missing');
+        continue;
+      }
       assert.equal(result.ok, true, `${endpoint} must resolve: ${JSON.stringify(result)}`);
     }
 

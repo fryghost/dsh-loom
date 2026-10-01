@@ -41,7 +41,8 @@ test('the client calls only endpoints the host registers', () => {
   // `call('name')` literal. An endpoint added on one side alone is a 404 that
   // looks like an empty list.
   const called = new Set([...clientCode.matchAll(/\bcall\(\s*'([A-Za-z0-9_-]+)'/g)].map(match => match[1]));
-  assert.ok(called.size >= 4, `expected the client's four endpoints, found ${[...called].join(', ')}`);
+  assert.ok(called.size >= 6,
+    `expected the client's six endpoints, found ${[...called].join(', ')}`);
   assert.deepEqual(
     [...called].sort(),
     [...BRIDGE_ENDPOINTS].sort(),

@@ -143,3 +143,57 @@ test('a member that cannot be resolved is still written to disk', async () => {
     await rm(home, { recursive: true, force: true });
   }
 });
+
+test('the default chat folder survives a save and a reload', async () => {
+  const home = await tempHome();
+  try {
+    await saveManifest(home, {
+      schemaVersion: 2,
+      projects: [{ id: 'p1', title: 'P', members: ['ws-a'] }],
+      chatsCwd: 'D:\\work\\chat',
+    });
+
+    const raw = await readFile(manifestPath(home), { encoding: 'utf8' });
+    assert.match(raw, /"chatsCwd": "D:\\\\work\\\\chat"/, 'the preference is written beside projects');
+
+    const loaded = await loadManifest(home);
+    assert.equal(loaded.manifest.chatsCwd, 'D:\\work\\chat');
+    assert.equal(loaded.manifest.projects.length, 1, 'and it does not replace the projects');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('a manifest with no chat folder is written exactly as before', async () => {
+  // The key must not appear at all when unset: a history-free manifest has to
+  // stay byte-identical to what earlier versions wrote, so a downgrade (or a
+  // diff) shows no change it cannot explain.
+  const home = await tempHome();
+  try {
+    await saveManifest(home, { schemaVersion: 2, projects: [] });
+    const raw = await readFile(manifestPath(home), { encoding: 'utf8' });
+    assert.doesNotMatch(raw, /chatsCwd/, 'an unset preference is omitted, not written blank');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('a project edit that omits the chat folder preserves it', async () => {
+  // The client merged what it was handed; this pins the STORE's half of that
+  // bargain — a payload without the key is a manifest without it, so the client
+  // must send it, and this test is why the client was changed to merge.
+  const home = await tempHome();
+  try {
+    await saveManifest(home, { schemaVersion: 2, projects: [], chatsCwd: '/work/chat' });
+    await saveManifest(home, {
+      schemaVersion: 2,
+      projects: [{ id: 'p1', title: 'P', members: ['ws-a'] }],
+      chatsCwd: '/work/chat',
+    });
+    const loaded = await loadManifest(home);
+    assert.equal(loaded.manifest.chatsCwd, '/work/chat');
+    assert.equal(loaded.manifest.projects.length, 1);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});

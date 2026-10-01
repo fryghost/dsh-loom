@@ -14,6 +14,7 @@
  * refusing to load is not.
  */
 
+import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
@@ -24,11 +25,15 @@ import skillRootsCore from './core/skill-roots.cjs';
 import contextPlanCore from './core/context-plan.cjs';
 import frontmatterCore from './core/frontmatter.cjs';
 import bridgeCore from './core/bridge.cjs';
+import migrationCore from './core/migration-plan.cjs';
+import manifestCore from './core/manifest.cjs';
 
 const { skillRootsForProject, instructionCandidatesForProject } = skillRootsCore;
 const { buildContextPlan } = contextPlanCore;
 const { parseSkillMetadata } = frontmatterCore;
 const { BRIDGE_CHANNEL, BRIDGE_ENDPOINTS, bridgeEndpoint, bridgePath } = bridgeCore;
+const { buildMigrationPlan } = migrationCore;
+const { normalizeComparablePath } = manifestCore;
 
 const name = 'dsh-loom';
 const inject = ['connection'];
@@ -141,6 +146,176 @@ async function gatherInstructions(candidates) {
   return instructions;
 }
 
+/**
+ * Gather the facts a migration plan needs from live services.
+ *
+ * Everything is read through `ctx.get(...)` for the reason this file's header
+ * gives: the host half cannot import a single `@deepseek-ai/*` package — a
+ * `link:`-installed plugin resolves none of them — so a missing capability must
+ * degrade into a NAMED reason rather than a load-time failure.
+ *
+ * @returns `{ ok: true, plan }`, or `{ ok: false, code, message }`.
+ */
+async function planMigrationWith(ctx, sessionId, targetWorkspaceId) {
+  const query = ctx.get('sessionQuery');
+  if (query === undefined || typeof query.readSession !== 'function') {
+    return { ok: false, code: 'migration-unavailable', message: 'the Host mounts no sessionQuery service' };
+  }
+  const registry = ctx.get('workspaceRegistry');
+  if (registry === undefined) {
+    return { ok: false, code: 'migration-unavailable', message: 'the Host mounts no workspaceRegistry service' };
+  }
+
+  const target = registry.get(targetWorkspaceId);
+  if (target === undefined) {
+    return { ok: false, code: 'workspace/not-found', message: `no workspace "${String(targetWorkspaceId)}"` };
+  }
+
+  let snapshot;
+  try {
+    // `readSession` returns a detached, replay-validated snapshot: no lease to
+    // dispose, and it works for both a live and a cold session.
+    snapshot = await query.readSession(sessionId);
+  } catch (reason) {
+    return {
+      ok: false,
+      code: 'migration-source-unreadable',
+      message: reason instanceof Error ? reason.message : String(reason),
+    };
+  }
+
+  // A copied session whose target folder is gone would attach to nothing and
+  // sit in 聊天 looking like a failed move, so this is refused up front.
+  const targetStatus = typeof target.status === 'function' ? await target.status() : 'ok';
+  if (targetStatus !== 'ok') {
+    return {
+      ok: false,
+      code: 'migration-target-missing',
+      message: `the folder for workspace "${target.title}" does not exist right now`,
+    };
+  }
+
+  const running = ctx.get('agents')?.get?.(sessionId)?.status === 'running';
+  const plan = buildMigrationPlan({
+    header: snapshot.session,
+    events: snapshot.events,
+    targetPath: target.path,
+    targetTitle: target.title,
+    running,
+    normalizePath: normalizeComparablePath,
+  });
+  return { ok: true, plan };
+}
+
+/**
+ * Copy one conversation into another workspace's folder.
+ *
+ * The new session's cwd IS the target folder, so DSH stores its log under that
+ * folder's project directory and the workspace's own attachment validates —
+ * this is the only mechanism DSH 0.2 offers, because a session's cwd is written
+ * into an immutable header (see `./core/migration-plan.cjs`).
+ *
+ * The copy is seeded with the source's completed prefix and an exact
+ * `inheritedEventCount`; DSH appends the tagged `session/end-seed` marker
+ * itself when a seeded header's inherited count is shorter than its log, so
+ * nothing here synthesizes events.
+ *
+ * `meta` deliberately carries NO `parentSession` and NO `origin`: Loom's own
+ * section rule (`./core/sections.cjs`) hides any session whose parent differs
+ * from itself, so lineage on the copy would make it vanish from the sidebar.
+ *
+ * @returns `{ ok: true, value }`, or `{ ok: false, code, message }`.
+ */
+async function migrateSessionWith(ctx, sessionId, targetWorkspaceId) {
+  const agents = ctx.get('agents');
+  if (agents === undefined || typeof agents.create !== 'function') {
+    return { ok: false, code: 'migration-unavailable', message: 'the Host mounts no agents service' };
+  }
+
+  // Re-planned here, not reused from the preview: the session could have
+  // started running, or been deleted, between the dialog rendering and the
+  // click. A stale plan would copy a prefix the user never agreed to.
+  const planned = await planMigrationWith(ctx, sessionId, targetWorkspaceId);
+  if (!planned.ok) return planned;
+  const { plan } = planned;
+  if (!plan.available) {
+    return { ok: false, code: `migration/${plan.reason}`, message: plan.reason, details: { reason: plan.reason } };
+  }
+
+  const query = ctx.get('sessionQuery');
+  const registry = ctx.get('workspaceRegistry');
+  const target = registry.get(targetWorkspaceId);
+  const snapshot = await query.readSession(sessionId);
+  const seed = snapshot.events.slice(0, plan.boundary + 1);
+
+  // Preset composition mirrors `ApiSessionAgentController.composeAgent`: resolve
+  // the source's preset, then mount it into the new agent's scoped context
+  // before publication. Without a registry the session still works; it simply
+  // carries the default tool surface.
+  const presets = ctx.get('agentPresets');
+  let agentPreset;
+  let setup;
+  if (presets !== undefined && typeof presets.resolve === 'function' && typeof presets.mount === 'function') {
+    try {
+      agentPreset = (await presets.resolve(snapshot.session.agentPreset)).id;
+      setup = async (agentCtx) => { await presets.mount(agentCtx, agentPreset); };
+    } catch (reason) {
+      return {
+        ok: false,
+        code: 'migration-preset-unavailable',
+        message: reason instanceof Error ? reason.message : String(reason),
+      };
+    }
+  }
+
+  const model = ctx.get('agentDefaultModel')?.currentSelection?.();
+  const newSessionId = `session-${randomUUID()}`;
+  try {
+    await agents.create({
+      sessionId: newSessionId,
+      seed,
+      inheritedEventCount: seed.length,
+      meta: {
+        cwd: target.path,
+        isSeeded: true,
+        ...agentPreset === undefined ? {} : { agentPreset },
+      },
+      ...model === undefined ? {} : { agentOptions: model },
+      ...setup === undefined ? {} : { setup },
+    });
+  } catch (reason) {
+    return {
+      ok: false,
+      code: 'migration-create-failed',
+      message: reason instanceof Error ? reason.message : String(reason),
+    };
+  }
+
+  // The copy already exists and its cwd equals the target path, so Loom's
+  // "resident" rule lists it under that workspace even if this attach fails.
+  // Failure is therefore reported, not rolled back: deleting a session the user
+  // can already open would be worse than an account that self-heals.
+  let attached = true;
+  let attachError;
+  try {
+    await target.attachSession(newSessionId);
+  } catch (reason) {
+    attached = false;
+    attachError = reason instanceof Error ? reason.message : String(reason);
+  }
+
+  return {
+    ok: true,
+    value: {
+      sessionId: newSessionId,
+      copiedEvents: plan.copiedEvents,
+      droppedEvents: plan.droppedEvents,
+      attached,
+      ...attachError === undefined ? {} : { attachError },
+    },
+  };
+}
+
 function createRpcHandler(ctx, dshHome) {
   const readManifestFromDisk = async () => {
     const loaded = await loadManifest(dshHome);
@@ -220,6 +395,52 @@ function createRpcHandler(ctx, dshHome) {
             activeWorkspaceId: payload?.activeWorkspaceId ?? project.defaultWorkspaceId,
           });
           return { ok: true, value: { plan } };
+        }
+
+        case 'planMigration': {
+          const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : '';
+          const targetWorkspaceId = typeof payload?.targetWorkspaceId === 'string' ? payload.targetWorkspaceId : '';
+          if (sessionId.length === 0 || targetWorkspaceId.length === 0) {
+            return {
+              ok: false,
+              error: {
+                code: 'gateway/bad-request',
+                message: 'planMigration needs both sessionId and targetWorkspaceId',
+                details: {},
+              },
+            };
+          }
+          const planned = await planMigrationWith(ctx, sessionId, targetWorkspaceId);
+          if (!planned.ok) {
+            return {
+              ok: false,
+              error: { code: planned.code, message: planned.message, details: {} },
+            };
+          }
+          return { ok: true, value: { plan: planned.plan } };
+        }
+
+        case 'migrateSession': {
+          const sessionId = typeof payload?.sessionId === 'string' ? payload.sessionId : '';
+          const targetWorkspaceId = typeof payload?.targetWorkspaceId === 'string' ? payload.targetWorkspaceId : '';
+          if (sessionId.length === 0 || targetWorkspaceId.length === 0) {
+            return {
+              ok: false,
+              error: {
+                code: 'gateway/bad-request',
+                message: 'migrateSession needs both sessionId and targetWorkspaceId',
+                details: {},
+              },
+            };
+          }
+          const migrated = await migrateSessionWith(ctx, sessionId, targetWorkspaceId);
+          if (!migrated.ok) {
+            return {
+              ok: false,
+              error: { code: migrated.code, message: migrated.message, details: migrated.details ?? {} },
+            };
+          }
+          return { ok: true, value: migrated.value };
         }
 
         default:
@@ -397,7 +618,9 @@ export {
   gatherSkills,
   inject,
   isSameOrInside,
+  migrateSessionWith,
   name,
+  planMigrationWith,
   resolveDshHome,
   resolvePaths,
   respondToBridge,

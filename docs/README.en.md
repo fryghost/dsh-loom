@@ -164,7 +164,7 @@ node -p "require(process.env.USERPROFILE + '/.dsh/profiles/web/node_modules/dsh-
 grep -A1 'dsh-loom' ~/.dsh/profiles/web/pnpm-lock.yaml | grep codeload
 ```
 
-Every released version carries a git tag (`v0.2.5` and friends), so you can tell how far behind you are:
+Every released version carries a git tag (`v0.2.6` and friends), so you can tell how far behind you are:
 
 ```bash
 git ls-remote --tags https://github.com/fryghost/dsh-loom.git
@@ -193,7 +193,7 @@ Loom takes over the sidebar's browse area and splits it into three sections. **A
 ▾ 工作区  3                                +
   ▾ ws-a                           ⋯
         调整构建脚本              2 小时
-▾ 聊天  1
+▾ 聊天  1                                  +
       [来自其他工具的会话…          15 天
 ```
 
@@ -204,6 +204,10 @@ Loom takes over the sidebar's browse area and splits it into three sections. **A
 | **Projects** | Sessions under a project's member folders (deduplicated when several members match the same session) |
 | **Workspaces** | **Every registered workspace** is listed; one claimed by a project names the claiming project, and its sessions appear under that project instead of being repeated here |
 | **Chats** | Sessions whose cwd matches no registered workspace path |
+
+**The Chats section has a `+` too.** All three sections can start a session: the `+` on a project or workspace row opens one in the folder it names, and the `+` on the Chats band **asks you to pick a folder the first time**, remembers it, and goes straight there afterwards. That default folder is set or cleared from the band's `⋯` and stored as `chatsCwd` at the top level of the manifest. It is a **starting-point preference only** — it never moves an existing session, and Chats still means "no registered workspace claims this cwd". If the folder you pick happens to be a registered workspace, the new session joins that workspace (DSH's own rule), and the picker says so.
+
+> Before 0.2.6 the Chats band had **no entry point at all**: both sibling bands carried a `+` in their headers, and Chats' sessions hang directly off the band with no group row above them, so the group renderer's `+` never reached them either. DSH's own browser has the same gap in its Ungrouped bucket — which is why it read as intentional rather than missing.
 
 **A claimed workspace does not disappear.** A folder may belong to several projects at once, so the Workspaces section lists every registered workspace; one that belongs to a project shows that project's name beside it (as in `ws-a` beside `example-project`, with "Claimed by: example-project" on hover) instead of vanishing from the list — vanishing is what made a folder look like it could not be bound to anything else. Sessions are still listed once: a claimed workspace's sessions appear under the project.
 
@@ -252,8 +256,11 @@ For example: if the workspace of the session `重构解析器` is a member of bo
 | Change project members / starting folder | The project row's `⋯` → Edit. **A folder can belong to several projects at once** |
 | Expand every session of one project | Click the group name, or "Show N more" (4 rows by default) |
 | Start a new chat in a folder | The group row's `+` |
+| Start a new chat in no particular folder | The `+` on the right of the **Chats** section; the first time it asks you to pick a folder and remembers it |
+| Change the Chats default folder | The `⋯` on the right of the **Chats** section → set / clear the default folder |
 | **See what this project will actually load** | The project row's `⋯` → **Context preflight** |
 | Rename / fork / archive a session | The session row's `⋯` |
+| **Move a conversation to another workspace** | The session row's `⋯` → **Move to another workspace** (read the plan, then confirm) |
 | Create / rename / delete a workspace | The `+` on the right of the **Workspaces** section; the workspace row's `⋯` |
 | Collapse a whole section | Click the section title |
 | Search | The search box at the top; matches session titles and group names together |
@@ -263,6 +270,35 @@ Deleting a workspace **removes only the registration**: it deletes no folder and
 ### What the starting folder is
 
 A project can name a "default starting point" — a new chat session starts there. It is **a preference, not a rank**: it gives that folder no priority in skill discovery. Multi-folder aggregation treats every member alike, and conflicts are settled by role and declaration order (see the [design notes](design.md)).
+
+Chats' `chatsCwd` is the same kind of thing: it decides **where a new session starts**, and changes no existing session's attribution.
+
+### Moving to another workspace: why it copies instead of moving
+
+**DSH has no way to move a session to another workspace.** That is a design fact, not a missing API:
+
+| Constraint | Source |
+|---|---|
+| `SessionHeader.cwd` is immutable; no setter exists anywhere | `core/session/src/index.ts` |
+| The log directory is **derived from cwd**, so rewriting a header moves no log | `session-persistence-jsonl/src/format.ts`: `projectDir(root, cwd)` |
+| `attachSession` **refuses** when cwd and workspace path disagree | `workspace/workspace/src/entity.ts` |
+| `ensureSession` throws `ApiSessionCwdConflict` on a mismatch | `api/session-controller/src/agent.ts` |
+| **`session.fork` copies the source cwd verbatim** and re-attaches the child to the **source** workspace | `api/session-controller/src/commands.ts` |
+
+That last row is the one most likely to look promising and most likely to disappoint: even forking cannot move a conversation. Loom's own attribution is exact cwd equality too, so re-registering a workspace moves nothing either.
+
+So "Move to another workspace" does this: **create a new session in the target folder, seed its history from the original's completed turns, and archive the original**. Before anything happens the dialog states each of those facts — how much history is copied, how much is not, that the original is archived rather than deleted, that the new session is not a branch, and that skills and the write boundary follow the new folder.
+
+| Situation | Result |
+|---|---|
+| The session is running | **Refused.** The cut can only land on a completed turn, so a forced move would silently drop work in flight |
+| No completed turn | Refused (there is no history to copy) |
+| The target is the original folder | Refused (a move would change nothing) |
+| The target workspace's folder is gone | Refused (the new session would attach to a nonexistent directory) |
+| The copy succeeds but attach fails | **Partial success**: the copy's cwd already equals the target path, so Loom's "resident" rule lists it under that workspace anyway. Deleting a session the user can already open is worse than an account that self-heals |
+| The copy succeeds but archiving fails | Partial success: the dialog names both sessions, and the original stays where it was |
+
+The copy deliberately carries **no lineage** (`parentSession` / `origin`): Loom's visibility rule treats any session whose parent differs from itself as delegated and hides it, so lineage would make the copy vanish from every section and read as a failed move.
 
 ## Data and safety
 
@@ -336,22 +372,25 @@ This is a design problem rather than a missing translation: **a pure function sh
 Host (src/index.js)                     plain Node, no browser dependency
 ├── host/manifest-store.js   atomic $DSH_HOME read/write + schema version guard
 ├── host/skill-provider.js   ctx.skills.registerProvider — sibling folders contribute skills
-└── /api/dsh-loom/*          exact Fetch routes: getManifest / putManifest / preflight / report
+└── /api/dsh-loom/*          exact Fetch routes: getManifest / putManifest / preflight /
+                             report / planMigration / migrateSession
 
 Client (src/client.cjs)                 contributes one slot only
 ├── LoomSidebarHost          the sidebar browser: 项目 / 工作区 / 聊天
-├── LoomSidebar              three-section tree + search
-├── SessionRow / LoomGroup   session rows (rename/branch/archive) and group rows
+├── LoomSidebar              three-section tree + search, each section able to start a session
+├── SessionRow / LoomGroup   session rows (rename/branch/move/archive) and group rows
 ├── ProjectEditor            multi-parent folder membership (no exclusivity, no primary)
 ├── PreflightModal           the context preflight
+├── MigrateModal             migration plan preview → confirm → archive the original, open the copy
 └── RowMenu                  the shared row ellipsis menu
 
 src/core/*.cjs                          pure functions, testable without DSH or a browser
 ├── bridge.cjs               the route both halves share (channel / namespace / endpoint list)
-├── manifest.cjs             schema validation and migration
+├── manifest.cjs             schema validation and migration (including chatsCwd)
 ├── skill-roots.cjs          members → skill roots / instruction candidates
 ├── frontmatter.cjs          SKILL.md metadata parsing (CRLF included)
 ├── context-plan.cjs         the preflight plan: sources, collisions, silent folders, write boundary
+├── migration-plan.cjs       the migration plan: completed-turn cut, named refusal reasons
 └── sections.cjs             three-section attribution (unique) and the visibility rules
 ```
 

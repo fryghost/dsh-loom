@@ -51,7 +51,9 @@ const BRIDGE_NAMESPACE = 'dsh-loom';
  * these names; `test/client-bridge.test.cjs` pins both directions, so an
  * endpoint added on one side alone fails the suite instead of 404ing at runtime.
  */
-const BRIDGE_ENDPOINTS = Object.freeze(['getManifest', 'putManifest', 'preflight', 'report']);
+const BRIDGE_ENDPOINTS = Object.freeze([
+  'getManifest', 'putManifest', 'preflight', 'report', 'planMigration', 'migrateSession',
+]);
 
 /**
  * Absolute route path for one endpoint, as the carrier expects it.

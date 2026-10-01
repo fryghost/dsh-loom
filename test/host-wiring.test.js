@@ -29,7 +29,7 @@ import { mkdtemp, mkdir, writeFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
-import { apply, bridgeEndpoint, bridgePath, createRpcHandler, isSameOrInside, resolveDshHome, respondToBridge } from '../src/index.js';
+import { BRIDGE_ENDPOINTS, apply, bridgeEndpoint, bridgePath, createRpcHandler, isSameOrInside, resolveDshHome, respondToBridge } from '../src/index.js';
 
 /** HTTP methods an exact Fetch route may own (`ConnectionFetchMethod`). */
 const FETCH_METHODS = new Set(['GET', 'HEAD', 'POST']);
@@ -165,11 +165,15 @@ test('apply mounts one exact Fetch route per endpoint on the shared /api channel
   const ctx = fakeContext({ services: {} });
   apply(ctx, { dshHome: join(tmpdir(), 'loom-fake-home') });
 
+  // Derived from the shared list, NOT restated: a second copy of the endpoint
+  // names here would have to be edited in lockstep with `bridge.cjs`, and the
+  // failure it would hide is a route the client calls but nobody mounted.
   assert.deepEqual(
     [...ctx._routes.keys()].sort(),
-    ['getManifest', 'preflight', 'putManifest', 'report'].map(name => `/api/dsh-loom/${name}`).sort(),
+    BRIDGE_ENDPOINTS.map(bridgePath).sort(),
     'every endpoint needs its own exact route: exact paths do not overlap',
   );
+  assert.equal(ctx._routes.size, BRIDGE_ENDPOINTS.length, 'one route per shared endpoint');
   for (const [path, route] of ctx._routes) {
     assert.deepEqual(route.methods, ['POST'], `${path} is written by POST only`);
     assert.equal(route.requestBody, 'buffered', `${path} carries a JSON envelope`);
@@ -319,7 +323,7 @@ test('the client-request envelope is validated the way the carrier validates it'
 test('unloading Loom withdraws every bridge route', () => {
   const ctx = fakeContext({ services: {} });
   apply(ctx, { dshHome: join(tmpdir(), 'loom-fake-home') });
-  assert.equal(ctx._routes.size, 4);
+  assert.equal(ctx._routes.size, BRIDGE_ENDPOINTS.length);
   for (const dispose of ctx._disposers) dispose();
   assert.equal(ctx._routes.size, 0, 'a route that survives unload would collide on the next load');
 });
@@ -355,7 +359,7 @@ test('apply registers every bridge route and the skill provider', () => {
   const ctx = fakeContext({ services: { skills: {} } });
   apply(ctx, { dshHome: join(tmpdir(), 'loom-fake-home') });
 
-  assert.equal(ctx._routes.size, 4, 'the bridge must be mounted on the shared channel');
+  assert.equal(ctx._routes.size, BRIDGE_ENDPOINTS.length, 'the bridge must be mounted on the shared channel');
   assert.equal(ctx._registered.length, 1, 'the skill provider must be registered exactly once');
   assert.ok(ctx._disposers.length >= 1, 'the provider must have a disposer for unload');
 });
@@ -364,7 +368,7 @@ test('apply still loads when no skills service exists', () => {
   // A composition without a skills registry must degrade, not refuse to load.
   const ctx = fakeContext({ services: {} });
   assert.doesNotThrow(() => apply(ctx, { dshHome: join(tmpdir(), 'loom-fake-home') }));
-  assert.equal(ctx._routes.size, 4);
+  assert.equal(ctx._routes.size, BRIDGE_ENDPOINTS.length);
   assert.equal(ctx._registered.length, 0);
 });
 
@@ -519,6 +523,383 @@ test('preflight names a folder whose workspace cannot be resolved', async () => 
     assert.equal(result.ok, true);
     const silent = result.value.plan.silent.find(entry => entry.workspaceId === 'ws-gone');
     assert.equal(silent.reason, 'workspace-unresolved');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * Migration over the bridge
+ * ------------------------------------------------------------------ */
+
+/**
+ * A stored log shaped the way `sessionQuery.readSession` returns one.
+ *
+ * The default log ENDS MID-TURN on purpose, so the completed prefix and the
+ * whole log are different lengths. A fixture whose log was exactly its own
+ * prefix could not tell "seed the completed history" from "seed everything" —
+ * the two would produce identical bytes and the mutation would go unnoticed.
+ */
+function storedSession({ cwd = '/repos/alpha', events } = {}) {
+  return {
+    session: { version: 4, id: 'session-src', createdAt: 1, isSeeded: false, cwd },
+    inheritedEventCount: 0,
+    events: events ?? [
+      { type: 'turn/start', seq: 0, time: 1, data: { turn: 1 } },
+      { type: 'turn/end', seq: 1, time: 2, data: { turn: 1, reason: { kind: 'completed' } } },
+      // An interrupted second turn, still open: durable, but NOT part of the
+      // completed prefix a migration copies.
+      { type: 'turn/start', seq: 2, time: 3, data: { turn: 2 } },
+      { type: 'assistant/message', seq: 3, time: 4, data: { turn: 2, step: 1, message: { content: [] } } },
+    ],
+  };
+}
+
+/**
+ * The services a migration needs, faked the way the real ones behave.
+ *
+ * `target.attachSession` really validates in DSH (it compares the session's
+ * canonical cwd to the workspace path), so the fake records what it was asked
+ * to attach rather than approving anything.
+ */
+function migrationServices(overrides = {}) {
+  const created = [];
+  const attached = [];
+  const reads = [];
+  const target = {
+    id: 'ws-beta',
+    path: '/repos/beta',
+    title: 'beta',
+    status: async () => 'ok',
+    attachSession: async id => { attached.push(id); },
+    ...overrides.target,
+  };
+  return {
+    created,
+    attached,
+    reads,
+    sessions: {
+      sessionQuery: {
+        readSession: async id => {
+          reads.push(id);
+          return overrides.stored ?? storedSession();
+        },
+      },
+      workspaceRegistry: {
+        get: id => (id === 'ws-beta' ? target : undefined),
+      },
+      agents: {
+        get: () => undefined,
+        create: async options => { created.push(options); return { agent: { id: options.sessionId } }; },
+      },
+    },
+  };
+}
+
+test('planMigration reports what a move would copy', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices();
+    const ctx = fakeContext({ services: fake.sessions });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('planMigration', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+
+    assert.equal(result.ok, true);
+    assert.equal(result.value.plan.available, true);
+    assert.equal(result.value.plan.copiedEvents, 2);
+    assert.equal(result.value.plan.title, 'beta');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('planMigration refuses a bad request instead of guessing', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const ctx = fakeContext({ services: migrationServices().sessions });
+    const handler = createRpcHandler(ctx, home);
+
+    for (const payload of [{}, { sessionId: 'session-src' }, { targetWorkspaceId: 'ws-beta' }]) {
+      const result = await handler('planMigration', payload);
+      assert.equal(result.ok, false);
+      assert.equal(result.error.code, 'gateway/bad-request');
+    }
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('planMigration names a missing capability rather than loading badly', async () => {
+  // The header contract of `src/index.js`: a composition without the migration
+  // services must still load, and must answer with WHAT is missing.
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const ctx = fakeContext({ services: {} });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('planMigration', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'migration-unavailable');
+    assert.match(result.error.message, /sessionQuery/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('planMigration reports an unknown target workspace', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const ctx = fakeContext({ services: migrationServices().sessions });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('planMigration', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-gone',
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'workspace/not-found');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('planMigration refuses a target folder that no longer exists', async () => {
+  // The copy's cwd would be a directory that is not there, so the new session
+  // would attach to nothing and sit in 聊天 looking like a failed move.
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices({ target: { status: async () => 'missing-dir' } });
+    const ctx = fakeContext({ services: fake.sessions });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('planMigration', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'migration-target-missing');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('planMigration refuses to move a conversation into its own folder', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices({
+      stored: storedSession({ cwd: '/repos/beta' }),
+    });
+    const ctx = fakeContext({ services: fake.sessions });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('planMigration', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+    assert.equal(result.ok, true, 'the plan resolves; it is the PLAN that refuses');
+    assert.equal(result.value.plan.available, false);
+    assert.equal(result.value.plan.reason, 'same-workspace');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('planMigration refuses a running session rather than truncating it', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices();
+    const ctx = fakeContext({
+      services: {
+        ...fake.sessions,
+        agents: { get: () => ({ status: 'running' }), create: async () => {} },
+      },
+    });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('planMigration', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+    assert.equal(result.ok, true);
+    assert.equal(result.value.plan.available, false);
+    assert.equal(result.value.plan.reason, 'session-running');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('migrateSession seeds a copy in the target folder and attaches it', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices();
+    const ctx = fakeContext({ services: fake.sessions });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('migrateSession', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+
+    assert.equal(result.ok, true);
+    assert.match(result.value.sessionId, /^session-/, 'a NEW session id is minted');
+    assert.equal(result.value.copiedEvents, 2);
+    assert.equal(result.value.attached, true);
+    assert.deepEqual(fake.attached, [result.value.sessionId], 'the copy is attached to the target');
+
+    const created = fake.created[0];
+    assert.equal(created.meta.cwd, '/repos/beta', 'the copy lives in the TARGET folder');
+    assert.equal(created.meta.isSeeded, true);
+    // The COMPLETED prefix, not the whole log: seqs 2 and 3 are an interrupted
+    // turn still open, and copying them would hand the new session work it is
+    // not running. Asserted by seq as well as length, so a fixture that grew
+    // would not silently make this vacuous.
+    assert.equal(created.seed.length, 2, 'the seed is the completed prefix');
+    assert.deepEqual(created.seed.map(event => event.seq), [0, 1], 'and stops at the turn end');
+    assert.equal(created.inheritedEventCount, 2, 'the inherited count matches the seed exactly');
+    assert.equal(result.value.droppedEvents, 2, 'the open turn is reported as dropped, not hidden');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('the copy carries no lineage, which would hide it from every section', async () => {
+  // `src/core/sections.cjs` treats any session whose parent differs from itself
+  // as delegated and hides it. A copied conversation carrying `parentSession`
+  // would vanish from the sidebar and read as a failed move.
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices();
+    const ctx = fakeContext({ services: fake.sessions });
+    const handler = createRpcHandler(ctx, home);
+
+    await handler('migrateSession', { sessionId: 'session-src', targetWorkspaceId: 'ws-beta' });
+
+    const { meta } = fake.created[0];
+    assert.equal(meta.parentSession, undefined, 'fork lineage would hide the copy');
+    assert.equal(meta.origin, undefined, 'and so would a subagent origin');
+    assert.equal(meta.cwd, '/repos/beta');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('migrateSession re-plans, so a session that started running is refused', async () => {
+  // The dialog planned when it opened; the click can arrive later. A stale plan
+  // would copy a prefix the user never agreed to.
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices();
+    const ctx = fakeContext({
+      services: {
+        ...fake.sessions,
+        agents: { get: () => ({ status: 'running' }), create: async () => {} },
+      },
+    });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('migrateSession', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'migration/session-running');
+    assert.equal(fake.created.length, 0, 'nothing may be created once the plan refuses');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('migrateSession reads the source itself, not a plan handed to it', async () => {
+  // The stronger form of the same rule: the endpoint takes ids, never a plan.
+  // It must therefore observe the session at CLICK time and use THAT boundary —
+  // a version that trusted a caller-supplied plan could be driven by a dialog
+  // left open while the conversation moved on. Counted, because the observable
+  // difference between "re-planned" and "reused" is exactly one more read.
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices();
+    const ctx = fakeContext({ services: fake.sessions });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('migrateSession', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+
+    assert.equal(result.ok, true);
+    assert.deepEqual(fake.reads, ['session-src', 'session-src'],
+      'the endpoint must observe the source twice: once to plan, once to seed');
+    assert.equal(fake.created[0].seed.length, result.value.copiedEvents,
+      'and the seed must be the prefix the plan it just computed described');
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('a failed attach is reported as a partial success, not rolled back', async () => {
+  // The copy exists and its cwd already equals the target path, so Loom's own
+  // "resident" rule lists it under that workspace anyway. Deleting a session
+  // the user can already open would be worse than an account that self-heals.
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices({
+      target: { attachSession: async () => { throw new Error('registry is read-only'); } },
+    });
+    const ctx = fakeContext({ services: fake.sessions });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('migrateSession', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+
+    assert.equal(result.ok, true, 'the session WAS created; that fact survives');
+    assert.equal(result.value.attached, false);
+    assert.match(result.value.attachError, /read-only/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('a create failure is reported without minting anything visible', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const fake = migrationServices();
+    const ctx = fakeContext({
+      services: {
+        ...fake.sessions,
+        agents: { get: () => undefined, create: async () => { throw new Error('agent registry is full'); } },
+      },
+    });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('migrateSession', {
+      sessionId: 'session-src', targetWorkspaceId: 'ws-beta',
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'migration-create-failed');
+    assert.match(result.error.message, /registry is full/);
+  } finally {
+    await rm(home, { recursive: true, force: true });
+  }
+});
+
+test('an unreadable source log is reported, not thrown', async () => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  try {
+    const ctx = fakeContext({
+      services: {
+        sessionQuery: { readSession: async () => { throw new Error('no such session'); } },
+        workspaceRegistry: {
+          get: () => ({ id: 'ws-beta', path: '/repos/beta', title: 'beta', status: async () => 'ok' }),
+        },
+      },
+    });
+    const handler = createRpcHandler(ctx, home);
+
+    const result = await handler('planMigration', {
+      sessionId: 'session-missing', targetWorkspaceId: 'ws-beta',
+    });
+    assert.equal(result.ok, false);
+    assert.equal(result.error.code, 'migration-source-unreadable');
   } finally {
     await rm(home, { recursive: true, force: true });
   }

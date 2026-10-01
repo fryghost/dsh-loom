@@ -164,7 +164,7 @@ node -p "require(process.env.USERPROFILE + '/.dsh/profiles/web/node_modules/dsh-
 grep -A1 'dsh-loom' ~/.dsh/profiles/web/pnpm-lock.yaml | grep codeload
 ```
 
-已经发布的版本都有 git tag（`v0.2.5` 等），可以对照 tag 判断落后多少：
+已经发布的版本都有 git tag（`v0.2.6` 等），可以对照 tag 判断落后多少：
 
 ```bash
 git ls-remote --tags https://github.com/fryghost/dsh-loom.git
@@ -193,7 +193,7 @@ dsh plugin --profile web remove dsh-loom
 ▾ 工作区  3                                +
   ▾ ws-a                           ⋯
         调整构建脚本              2 小时
-▾ 聊天  1
+▾ 聊天  1                                  +
       [来自其他工具的会话…          15 天
 ```
 
@@ -204,6 +204,10 @@ dsh plugin --profile web remove dsh-loom
 | **项目** | 项目成员文件夹下的会话（多成员命中同一会话时去重） |
 | **工作区** | **每一个已登记的工作区**都列出；被项目认领的那一行标出认领它的项目，其会话只在项目下出现、此处不重复 |
 | **聊天** | cwd 匹配不到任何已登记工作区路径的会话 |
+
+**「聊天」段也有 `+`。** 三段各自都能新建会话：项目行和工作区行的 `+` 在它们指向的文件夹里开；「聊天」段的 `+` 在没有默认文件夹时**先弹目录选择器**，选完记住，下次直接开。默认文件夹由段标题的 `⋯` 设置或清除，存在清单顶层的 `chatsCwd`。它只是一个**起点偏好**——不会让已有会话改变归属，「聊天」的定义仍然是"没有任何已登记工作区认领它的 cwd"。如果选中的文件夹恰好是已登记工作区，新会话会归到那个工作区（DSH 自己的规则），选择时界面会明说。
+
+> 0.2.6 之前，「聊天」段**没有任何入口**：两个兄弟段的标题都带着 `+`，而它的会话直接挂在段下、没有组行，所以组渲染器里那个 `+` 也够不着它们。DSH 原生浏览器的 Ungrouped 桶有同样的缺口——这就是它看起来像设计如此、而不是像缺了东西的原因。
 
 **被认领的工作区不会消失。** 一个文件夹可以同时属于多个项目，所以「工作区」段列的是**全部**已登记工作区；属于某个项目的那一行会在名称旁显示项目名（如 `ws-a` 旁的 `example-project`，悬停提示「已被项目认领」），而不是从列表里消失——消失看起来就像它不能再绑到别的项目了。会话仍然只出现一次：被认领工作区的会话列在项目下。
 
@@ -252,8 +256,11 @@ get sessionIds() { return this.record.sessionIds.filter(id => sessionPath(id) ==
 | 改项目成员 / 起始文件夹 | 项目行的 `⋯` → 编辑。**一个文件夹可以同时属于多个项目** |
 | 展开某个项目的全部会话 | 点组名，或「展开其余 N 个会话」（默认显示 4 条） |
 | 在某个文件夹里开新对话 | 组行的 `+` |
+| 在没有归属的文件夹里开新对话 | 「聊天」段右侧的 `+`；首次会让你选文件夹并记住 |
+| 改「聊天」的默认文件夹 | 「聊天」段右侧的 `⋯` → 设置 / 清除默认文件夹 |
 | **看这个项目到底会加载什么** | 项目行的 `⋯` → **上下文预检** |
 | 重命名 / 分支 / 归档会话 | 会话行的 `⋯` |
+| **把对话迁移到别的工作区** | 会话行的 `⋯` → **迁移到其他工作区**（先看方案，再确认） |
 | 新建 / 重命名 / 删除工作区 | 「工作区」段右侧的 `+`；工作区行的 `⋯` |
 | 收起整段 | 点段标题 |
 | 搜索 | 顶部搜索框，同时匹配会话标题和组名 |
@@ -263,6 +270,35 @@ get sessionIds() { return this.record.sessionIds.filter(id => sessionPath(id) ==
 ### 起始文件夹是什么
 
 项目可以指定一个「默认起点」——新对话会话从这里开始。它是**偏好，不是等级**：它不会让那个文件夹在技能发现时获得优先权。多文件夹的聚合对每个成员一视同仁，冲突由角色和声明顺序决定（见[设计说明](docs/design.md)）。
+
+「聊天」段的 `chatsCwd` 是同一类东西：它决定**新会话从哪开始**，不改变任何既有会话的归属。
+
+### 迁移到其他工作区：为什么是复制，不是搬移
+
+**DSH 里没有把会话搬到另一个工作区的办法**，这是设计事实而不是缺 API：
+
+| 约束 | 依据 |
+|---|---|
+| `SessionHeader.cwd` 不可变，全仓没有 setter | `core/session/src/index.ts` |
+| 日志目录**由 cwd 派生**，改头不改目录 | `session-persistence-jsonl/src/format.ts`：`projectDir(root, cwd)` |
+| `attachSession` 在 cwd 与工作区路径不一致时**拒绝** | `workspace/workspace/src/entity.ts` |
+| `ensureSession` 不一致时抛 `ApiSessionCwdConflict` | `api/session-controller/src/agent.ts` |
+| **`session.fork` 原样复制源 cwd**，并把子会话挂回**源**工作区 | `api/session-controller/src/commands.ts` |
+
+最后一条最容易让人以为有戏，也最容易落空：连"分叉"都搬不了家。Loom 自己的归属判定同样是 cwd 精确相等，所以改登记也搬不动。
+
+于是「迁移到其他工作区」做的是：**在目标文件夹建一个新会话，历史取自原会话已完成的回合，原会话归档**。界面在动手前把这几件事逐条说清楚——复制多少条历史、有多少条不复制、原会话只归档不删除、新会话不是分支、技能与写入边界跟随新文件夹。
+
+| 情况 | 结果 |
+|---|---|
+| 会话正在运行 | **拒绝**。截断点只能落在已完成的回合上，硬迁会静默丢掉进行中的工作 |
+| 没有已完成的回合 | 拒绝（没有可复制的历史） |
+| 目标就是原文件夹 | 拒绝（迁了等于没迁） |
+| 目标工作区的文件夹不存在 | 拒绝（新会话会挂到不存在的目录上） |
+| 复制成功但 attach 失败 | **部分成功**：新会话的 cwd 已经等于目标路径，Loom 的"居民"规则照样把它列在那个工作区下。删掉一个用户已经能打开的会话，比一个会自愈的账更糟 |
+| 复制成功但归档失败 | 部分成功：界面同时给出两个会话，原会话留在原位 |
+
+复制体**刻意不携带血缘**（`parentSession` / `origin`）：Loom 的可见性规则把"有 parent 且 parent 不等于自己"一律判为委派并隐藏，带上它复制体就会从所有段里消失，看起来像迁移失败。
 
 ## 数据与安全
 
@@ -336,22 +372,25 @@ Loom 不擅自绕过安全边界，但这条上游路径的收益/成本比明�
 Host (src/index.js)                     纯 Node，不依赖浏览器
 ├── host/manifest-store.js   $DSH_HOME 原子读写 + schema 版本守卫
 ├── host/skill-provider.js   ctx.skills.registerProvider —— 让兄弟文件夹贡献技能
-└── /api/dsh-loom/*           精确 Fetch 路由：getManifest / putManifest / preflight / report
+└── /api/dsh-loom/*           精确 Fetch 路由：getManifest / putManifest / preflight /
+                              report / planMigration / migrateSession
 
 Client (src/client.cjs)                 只贡献一个槽位
 ├── LoomSidebarHost          侧边栏浏览器：项目 / 工作区 / 聊天
-├── LoomSidebar              三段树 + 搜索
-├── SessionRow / LoomGroup   会话行（重命名/分支/归档）与组行
+├── LoomSidebar              三段树 + 搜索，三段各自能新建会话
+├── SessionRow / LoomGroup   会话行（重命名/分支/迁移/归档）与组行
 ├── ProjectEditor            文件夹多归属编辑（无独占、无主副）
 ├── PreflightModal           上下文预检
+├── MigrateModal             迁移方案预览 → 确认 → 归档原会话、打开复制体
 └── RowMenu                  统一的行内省略号菜单
 
 src/core/*.cjs                          纯函数，脱离 DSH 与浏览器即可测试
 ├── bridge.cjs               两半共用的路由（通道 / 命名空间 / 端点表）
-├── manifest.cjs             schema 校验与迁移
+├── manifest.cjs             schema 校验与迁移（含 chatsCwd）
 ├── skill-roots.cjs          成员 → 技能根 / 指令候选
 ├── frontmatter.cjs          SKILL.md 元信息解析（含 CRLF）
 ├── context-plan.cjs         预检计划：来源、冲突、静默文件夹、写入边界
+├── migration-plan.cjs       迁移计划：已完成回合截断点、具名拒绝理由
 └── sections.cjs             三段归属（唯一归属）与可见性规则
 ```
 

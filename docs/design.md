@@ -281,7 +281,38 @@ Loom 的规则：**结构性问题报告到 `dropped`，运行时可解析性问
 - `members: Array<{ workspaceId, role, note? }>` —— 对象而非裸 id，因为要记录**为什么**这个文件夹在项目里；
 - `role: 'writable' | 'readonly'` —— 描述贡献性质，不是排名；
 - `defaultWorkspaceId` —— 仅是新会话的默认起点，在发现逻辑中**没有任何特权**；
-- 零成员项目合法；单成员项目合法；跨项目重复成员合法。
+- 零成员项目合法；单成员项目合法；跨项目重复成员合法；
+- `chatsCwd?: string` —— 顶层可选偏好，0.2.6 加入。与 `defaultWorkspaceId` 同类：它只决定**新会话从哪开始**，不改变任何既有会话的归属。
+
+### 4.1 为什么 `chatsCwd` 不升 `schemaVersion`
+
+版本闸门回答的是一个具体问题：**这个构建能不能解释它即将读到的每一个字段**。一个新增的**可选**键不改变任何既有字段的含义，所以答案是"能"。
+
+反过来算这笔账：把版本升到 3，会让**每一个更早的 Loom**把整份清单判成 `supported: false` —— 用户打开侧边栏会发现**一个项目都没有**。而保持版本 2，更早的构建只是丢掉这一个偏好，用户重点一次文件夹即可。**丢一个可一键重设的偏好，比让整张项目表消失便宜得多。**
+
+`normalizeManifest` 对未知键的处理一直如此：读到时丢弃，绝不去猜。所以这个字段不需要迁移函数，只需要在重建 `projects` 的地方（`upsertProject` / `removeProject`）显式带上——它们的入参是清单，出参却是**重建后的**清单，不带上就等于让"改个项目名"顺手清掉它。
+
+### 4.2 为什么「迁移到其他工作区」是复制，而不是搬移
+
+**DSH 没有把会话搬到另一个工作区的办法。** 这不是"还没做 API"，是设计事实：
+
+| 事实 | 位置 |
+|---|---|
+| `SessionHeader.cwd` 是不可变的头字段，全仓无 setter | `core/session/src/index.ts`（`SessionHeader` 只读构造） |
+| 日志目录**由 cwd 派生**，改头不改目录 | `session-persistence-jsonl/src/format.ts`：`projectDir(root, cwd)` |
+| `attachSession` 在 `realpathNormalize(header.cwd) !== workspace.path` 时拒绝 | `workspace/workspace/src/entity.ts` |
+| `ensureSession` 在不一致时抛 `ApiSessionCwdConflict` | `api/session-controller/src/agent.ts` |
+| **`session.fork` 原样复制源 cwd**，并把子会话挂回**源**工作区 | `api/session-controller/src/commands.ts` |
+
+最后一条最容易被寄予希望，也最容易落空：连"分叉"都搬不了家。加上 Loom 自己的归属判定就是 cwd 精确相等（`src/core/sections.cjs`），改登记同样搬不动。
+
+所以唯一诚实的实现是：**建一个 `cwd` 指向目标文件夹的新会话，历史取自源的已完成前缀，原会话交给调用方决定去留**（0.2.6 里由客户端归档）。三个由此而来的硬约束：
+
+1. **截断点必须是已完成回合的末尾。** 运行中的会话直接**拒绝**，而不是截断——它开着的回合在最后一个 `turn/end` 之后，复制前缀会静默丢掉正在进行的工作，而"我们复制了大部分"是用户事后无法发现的。
+2. **复制体不能带血缘。** 不设 `parentSession`、不设 `origin`：Loom 的可见性规则把"有 parent 且 parent 不等于自己"一律判为委派并隐藏，带上它复制体就会从所有段里消失，看起来像迁移失败。
+3. **宿主要能自己完成 seed。** 宿主半边**解析不到任何 `@deepseek-ai/*` 包**（`link:` 安装的插件只能从 profile 一侧解析），所以不能 `import buildForkSeed`。所幸不需要：`SessionStore.prepare` 在 seeded 头的 `inheritedEventCount` 短于日志时**自己补** `session/end-seed` 标记，因此"取前缀 + 给准确的 `inheritedEventCount`"就是一份合法 seed，不必手工合成任何事件。
+
+`src/core/migration-plan.cjs` 是这条链上唯一的纯函数：它产出计划或**具名拒绝理由**，宿主照着执行。理由具名（`session-running` / `no-completed-turn` / `same-workspace` / `no-cwd` / `source-missing` / `no-target`）是为了让界面能说人话——一个没有解释的灰按钮是这条规则要避免的失败形态。
 
 ## 5. 测试策略
 
@@ -292,9 +323,14 @@ Loom 的规则：**结构性问题报告到 `dropped`，运行时可解析性问
 | 单元 | 预检：来源、冲突、静默文件夹、写入边界、可序列化 |
 | 单元 | frontmatter：CRLF、引号、块标量、拒绝条件与 DSH 一致 |
 | 单元 | 持久化：原子写、损坏不覆盖、未来版本不解释 |
+| 单元 | 迁移计划：截断点语义、计数、六个具名拒绝、计划内不得有血缘 |
+| 单元 | 两个新端点：注册、降级、各类拒绝、seed 逐事件断言、附加失败算部分成功 |
+| 渲染 | 三段各自的入口；迁移弹窗的承诺与拒绝；回写载荷不丢键 |
 | **e2e** | **真实文件系统上验证：cwd 在 A，B 的技能可见且正文可读** |
 
 最后一项是核心能力的证明，也是 Loom 与"仅 UI 分组"的分界线。
+
+回归测试必须**能变红**：`scripts/mutation-menu-anchor.cjs`（0.2.5）与 `scripts/mutation-chats-and-migrate.cjs`（0.2.6）把各自的修复逐块撤回，逐条断言套件失败。两个脚本都**不在 `test/` 下**——它们运行期改写 `src/` 并重建 `dist/`，而 `node --test` 并行执行 `test/` 里的每个文件。
 
 ## 6. 未决问题
 
@@ -302,6 +338,7 @@ Loom 的规则：**结构性问题报告到 `dropped`，运行时可解析性问
 2. 指令聚合（`systemPrompt.context`）尚未实现——`CONTEXT_ORDERS` 只预留了 `SANDBOX_POLICY`/`APPROVAL_POLICY`/`SUBAGENT_DELEGATION` 三个具名位置，项目指令需要裸数值或上游新增具名位。当前 Loom 只做**预检展示**，不注入 prompt。
 3. 是否需要 per-project 独立清单文件以利于版本控制。
 4. 跨文件夹写入是否值得提上游 RFC。
+5. **真正的会话搬移**是否值得提上游 RFC。§4.2 列出的六条约束里，前两条（头字段可改、日志随 cwd 迁移）是**存储层**的改动，第 5、6 条（fork 与 attach）会跟着自然解决。收益明确——用户心智里"这条对话属于那个项目"本就与 cwd 无关——但代价涉及会话日志的目录布局与降级兼容，不宜由插件单方面绕过。
 
 ## 7. 源码核查位置
 

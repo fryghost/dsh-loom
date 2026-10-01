@@ -134,7 +134,17 @@ function loadBundle(React) {
     stub[match[1]] = props => React.createElement('span', { 'data-atom': match[1] }, props?.children ?? null);
   }
   for (const atom of ['Button', 'Tag', 'StateDot', 'Modal', 'Input', 'Menu']) {
-    stub[atom] = props => React.createElement('span', { 'data-atom': atom }, props?.children ?? null);
+    // The menu's ITEMS are rendered too, not dropped. A real Menu portals them
+    // on open; the stub is always closed, so without this a verb no test could
+    // reach would look identical to one that was never added.
+    stub[atom] = atom === 'Menu'
+      ? props => React.createElement('span', { 'data-atom': atom },
+          props?.anchor ?? null,
+          (props?.items ?? []).map(item => React.createElement(
+            'span', { key: item.id, 'data-menu-item': item.id, onClick: props?.onSelect
+              ? () => props.onSelect(item.id) : undefined }, item.label,
+          )))
+      : props => React.createElement('span', { 'data-atom': atom }, props?.children ?? null);
   }
   for (const name of Object.keys(stub)) if (!names.has(name)) delete stub[name];
 
@@ -277,4 +287,324 @@ test('the bundle under test exists and is the one this repository ships', () => 
   assert.ok(existsSync(BUNDLE), 'dist/client.js is committed');
   const pkg = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8'));
   assert.equal(pkg.exports['./client'], './dist/client.js');
+});
+
+/* ------------------------------------------------------------------ *
+ * The manifest write must carry the keys it is not editing
+ * ------------------------------------------------------------------ */
+
+/**
+ * Mount the real host component over a bridge that records every write.
+ *
+ * `getManifest` answers with a manifest that has a chat folder set, then the
+ * test drives a PROJECT edit and inspects what reached `putManifest`. That is
+ * the only place the loss is observable: the host re-normalizes whatever it is
+ * handed, so a payload missing a key produces a manifest that simply lacks it —
+ * no error, no warning, and the preference is gone.
+ */
+function mountWithRecordingBridge(
+  React, ReactDOM, act, useSyncExternalStoreWithSelector, initialManifest, options = {},
+) {
+  const loom = loadBundle(React);
+  const writes = [];
+  const picked = [];
+  const started = [];
+  const opened = [];
+
+  let captured;
+  const ctx = {
+    effect: () => () => {},
+    locale: { register: () => () => {}, getLocale: () => ({ active: 'zh' }) },
+    connection: {
+      rpc: {
+        call: async (_channel, endpoint, payload) => {
+          if (endpoint === 'dsh-loom/getManifest') {
+            // First read: what the user already has. After a write: echo back
+            // exactly what was written, which is what the real store does.
+            const manifest = writes.length === 0 ? initialManifest : writes[writes.length - 1];
+            return { ok: true, value: { manifest, ok: true, path: '/tmp/manifest.json' } };
+          }
+          if (endpoint === 'dsh-loom/putManifest') {
+            writes.push(payload.manifest);
+            return { ok: true, value: { manifest: payload.manifest, path: '/tmp/manifest.json' } };
+          }
+          return { ok: true, value: {} };
+        },
+      },
+    },
+    get: name => {
+      if (name !== 'uiWorkspace') return undefined;
+      return {
+        pickDirectory: async () => options.pickDirectory ?? null,
+        startSession: id => { started.push(id); },
+        openSession: id => { opened.push(id); },
+        archiveSession: async () => {},
+        forkSession: async () => 'session-fork',
+      };
+    },
+    workspaces: { create: async () => {}, delete: async () => {}, rename: async () => {} },
+    sessions: { create: async () => 'session-new', binding: () => undefined },
+    slots: {
+      spec: () => ({ kind: 'single', scope: 'root' }),
+      declarationEpoch: () => 1,
+      inject: (_key, fn) => { fn(); },
+      register: (_options, component) => { captured = component; return () => {}; },
+    },
+  };
+  loom.apply(ctx);
+
+  const panelSource = observable({ activePanelId: null });
+  const usePanelInfo = selector => useSyncExternalStoreWithSelector(
+    panelSource.subscribe, panelSource.getSnapshot, panelSource.getSnapshot, selector,
+  );
+
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = ReactDOM.createRoot(container);
+  return {
+    writes,
+    picked,
+    started,
+    opened,
+    ctx,
+    root,
+    container,
+    render: () => act(() => {
+      root.render(React.createElement(captured, {
+        useWorkspaces: selector => selector(SNAPSHOT),
+        useSessions: selector => selector(SESSIONS),
+        usePanelInfo,
+        t: key => key,
+      }));
+    }),
+  };
+}
+
+/** Flush the pending microtask queue so the manifest read lands. */
+async function settle(act) {
+  await act(async () => { await Promise.resolve(); await Promise.resolve(); });
+}
+
+test('a project edit does not drop the default chat folder', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // THE regression this exists for. `put` used to send `{ schemaVersion,
+  // projects }` and nothing else — correct while projects were the whole
+  // manifest, and silently destructive once a preference lives beside them.
+  // A user would rename one project and lose where their new chats start.
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(React, ReactDOM, act, useSyncExternalStoreWithSelector, {
+    schemaVersion: 2,
+    projects: [{ id: 'p1', title: 'One', members: [] }],
+    chatsCwd: 'D:\\work\\chat',
+  });
+
+  try {
+    mounted.render();
+    await settle(act);
+
+    // Delete the only project: a write that has no opinion about the chat
+    // folder at all, and therefore must not touch it.
+    const deleteButton = [...mounted.container.querySelectorAll('[data-menu-item="delete"]')][0];
+    assert.ok(deleteButton !== undefined, 'the project row must offer its delete verb');
+    await act(async () => { deleteButton.click(); });
+    await settle(act);
+
+    assert.equal(mounted.writes.length, 1, 'exactly one write must have happened');
+    assert.equal(mounted.writes[0].chatsCwd, 'D:\\work\\chat',
+      'a project edit must carry the chat folder through, not drop it');
+    assert.deepEqual(mounted.writes[0].projects, [], 'while still applying the edit');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
+});
+
+test('a project edit keeps every other key it did not author', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // The rule, not the one key: whatever else a future version stores beside
+  // `projects` must survive an edit by an older dialog that knows nothing
+  // about it. Merging is what makes that true by construction.
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(React, ReactDOM, act, useSyncExternalStoreWithSelector, {
+    schemaVersion: 2,
+    projects: [{ id: 'p1', title: 'One', members: [] }],
+    chatsCwd: '/work/chat',
+    somethingAddedLater: { kept: true },
+  });
+
+  try {
+    mounted.render();
+    await settle(act);
+    const deleteButton = [...mounted.container.querySelectorAll('[data-menu-item="delete"]')][0];
+    await act(async () => { deleteButton.click(); });
+    await settle(act);
+
+    assert.deepEqual(mounted.writes[0].somethingAddedLater, { kept: true },
+      'an unknown key must survive a write this dialog did not author');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
+});
+
+/* ------------------------------------------------------------------ *
+ * The 聊天 band's entry point, driven through the real host
+ * ------------------------------------------------------------------ */
+
+/** The `+` control on the 聊天 band, found by its accessible name. */
+function chatsPlus(container) {
+  return [...container.querySelectorAll('button[aria-label="newChat"]')]
+    .find(button => button.closest('.loom-section-head') !== null);
+}
+
+test('the 聊天 + opens a session in the folder it is given', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // The whole point of the fix, end to end: a click on that band reaches
+  // DSH's New Session flow. Asserted through a real mount because the earlier
+  // defect was not "the button is missing" but "nothing is wired to it".
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(React, ReactDOM, act, useSyncExternalStoreWithSelector, {
+    schemaVersion: 2,
+    // A registered workspace, so the click must go through DSH's own
+    // `startSession` rather than a raw create — it reuses a blank session
+    // instead of piling up duplicates.
+    projects: [],
+  });
+
+  try {
+    mounted.render();
+    await settle(act);
+
+    const plus = chatsPlus(mounted.container);
+    assert.ok(plus !== undefined, 'the 聊天 band must have a + to click');
+    await act(async () => { plus.click(); });
+    await settle(act);
+
+    // SNAPSHOT registers `ws-a`, and the manifest sets no chatsCwd, so the
+    // picker runs first — returning null, which must be a clean no-op.
+    assert.deepEqual(mounted.started, [], 'a cancelled picker must start nothing');
+    assert.deepEqual(mounted.writes, [], 'and must write nothing');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
+});
+
+test('the 聊天 + remembers a picked folder and then starts there', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // One click picks and remembers; the SECOND click needs no dialog. That
+  // ordering is what makes the default folder a real feature rather than a
+  // prompt the user has to answer every time.
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(
+    React, ReactDOM, act, useSyncExternalStoreWithSelector,
+    { schemaVersion: 2, projects: [] },
+    { pickDirectory: '/repo/a' },
+  );
+
+  try {
+    mounted.render();
+    await settle(act);
+
+    await act(async () => { chatsPlus(mounted.container).click(); });
+    await settle(act);
+
+    assert.equal(mounted.writes.length, 1, 'the picked folder is remembered immediately');
+    assert.equal(mounted.writes[0].chatsCwd, '/repo/a');
+    assert.deepEqual(mounted.writes[0].projects, [], 'and the projects ride along untouched');
+    // `/repo/a` is SNAPSHOT's `ws-a` path, so DSH's own flow runs.
+    assert.deepEqual(mounted.started, ['ws-a'],
+      'a folder that is already a workspace goes through startSession');
+    assert.deepEqual(mounted.opened, [], 'and is not opened a second way');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
+});
+
+test('the 聊天 + creates directly for a folder that is no workspace', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // The unregistered-folder path: create at that cwd, then OPEN through the
+  // navigation face. `ctx.sessions.open` would leave a selected main panel in
+  // place and strand the user on it, which is why the contract test forbids it.
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(
+    React, ReactDOM, act, useSyncExternalStoreWithSelector,
+    { schemaVersion: 2, projects: [], chatsCwd: '/repo/elsewhere' },
+  );
+
+  try {
+    mounted.render();
+    await settle(act);
+
+    await act(async () => { chatsPlus(mounted.container).click(); });
+    await settle(act);
+
+    assert.deepEqual(mounted.started, [], 'an unregistered folder has no workspace to start in');
+    assert.deepEqual(mounted.opened, ['session-new'],
+      'the new session is opened through the navigation face');
+    assert.deepEqual(mounted.writes, [], 'and a stored default folder is not rewritten');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
+});
+
+test('choosing a folder that is already a workspace says so', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // The setting still applies — it is a legitimate choice — but a new chat
+  // will join that workspace instead of appearing under 聊天. Saying so now is
+  // what keeps the user from concluding the setting did nothing.
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(
+    React, ReactDOM, act, useSyncExternalStoreWithSelector,
+    { schemaVersion: 2, projects: [] },
+    { pickDirectory: '/repo/a' },
+  );
+
+  try {
+    mounted.render();
+    await settle(act);
+
+    // Reach the band menu's "set" item. The menu stub renders its items as
+    // clickable rows, so this drives the same path a user does.
+    const setItem = [...mounted.container.querySelectorAll('[data-menu-item="set"]')][0];
+    assert.ok(setItem !== undefined, 'the band menu must offer "set default folder"');
+    await act(async () => { setItem.click(); });
+    await settle(act);
+
+    assert.ok(mounted.container.innerHTML.includes('chatsFolderIsWorkspace'),
+      'the consequence of picking a workspace folder must be stated');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
+});
+
+test('clearing the default folder writes the absence, not a blank', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // The host drops an unset preference, so the key disappears rather than
+  // becoming `""` — which every reader would then have to treat as "unset"
+  // too, in a second place that could disagree.
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(React, ReactDOM, act, useSyncExternalStoreWithSelector, {
+    schemaVersion: 2, projects: [], chatsCwd: '/work/chat',
+  });
+
+  try {
+    mounted.render();
+    await settle(act);
+
+    const clearItem = [...mounted.container.querySelectorAll('[data-menu-item="clear"]')][0];
+    assert.ok(clearItem !== undefined, 'with a folder set, the menu offers clearing');
+    await act(async () => { clearItem.click(); });
+    await settle(act);
+
+    assert.equal(mounted.writes.length, 1);
+    assert.equal(mounted.writes[0].chatsCwd, undefined, 'clearing removes the key');
+    assert.deepEqual(mounted.writes[0].projects, [], 'and leaves the projects alone');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
 });

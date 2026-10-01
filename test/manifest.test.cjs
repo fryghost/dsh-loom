@@ -3,15 +3,18 @@ const assert = require('node:assert/strict');
 
 const {
   SCHEMA_VERSION,
+  chatsFolderOf,
   createEmptyManifest,
   defaultWorkspaceFor,
   findProject,
   mergeMembers,
   migrateFromV1,
+  normalizeComparablePath,
   normalizeManifest,
   projectsContaining,
   readManifest,
   removeProject,
+  setChatsFolder,
   upsertProject,
 } = require('../src/core/manifest.cjs');
 
@@ -140,6 +143,93 @@ test('removeProject leaves other projects intact', () => {
   const after = removeProject(base, 'p1');
   assert.equal(after.projects.length, 1);
   assert.equal(after.projects[0].id, 'p2');
+});
+
+test('the default chat folder round-trips and is optional', () => {
+  // An ADDITIVE OPTIONAL key: absent on every manifest written before this
+  // existed, and absent must stay absent rather than becoming an empty string
+  // that reads as "set to nowhere".
+  const bare = normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [] });
+  assert.equal(chatsFolderOf(bare), undefined);
+  assert.ok(!('chatsCwd' in bare), 'an unset preference is omitted, not blank');
+
+  const set = normalizeManifest({
+    schemaVersion: SCHEMA_VERSION, projects: [], chatsCwd: '  D:\\work\\chat  ',
+  });
+  assert.equal(chatsFolderOf(set), 'D:\\work\\chat', 'the stored value is trimmed');
+
+  for (const blank of ['', '   ', 42, null, [], {}]) {
+    assert.equal(
+      chatsFolderOf(normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [], chatsCwd: blank })),
+      undefined,
+      `a non-path value (${JSON.stringify(blank)}) must read as unset`,
+    );
+  }
+});
+
+test('setting and clearing the chat folder keeps the projects', () => {
+  const base = normalizeManifest({
+    schemaVersion: SCHEMA_VERSION,
+    projects: [{ id: 'p1', title: 'One', members: ['ws-a'] }],
+  });
+
+  const withFolder = setChatsFolder(base, '/work/chat');
+  assert.equal(chatsFolderOf(withFolder), '/work/chat');
+  assert.equal(withFolder.projects.length, 1, 'the preference is beside projects, not instead of them');
+
+  const cleared = setChatsFolder(withFolder, undefined);
+  assert.equal(chatsFolderOf(cleared), undefined);
+  assert.equal(cleared.projects.length, 1, 'clearing a preference must not touch the projects');
+});
+
+test('editing a project does not clear the default chat folder', () => {
+  // The whole reason `withChatsCwd` exists: `upsertProject` and `removeProject`
+  // rebuild the PROJECT list, and a preference carried only by the caller's
+  // object would be dropped by an edit that has nothing to do with it.
+  const base = setChatsFolder(normalizeManifest({
+    schemaVersion: SCHEMA_VERSION,
+    projects: [{ id: 'p1', title: 'One', members: ['ws-a'] }],
+  }), '/work/chat');
+
+  const renamed = upsertProject(base, { id: 'p1', title: 'Renamed', members: ['ws-a'] });
+  assert.equal(chatsFolderOf(renamed), '/work/chat', 'renaming a project keeps the chat folder');
+
+  const removed = removeProject(renamed, 'p1');
+  assert.equal(chatsFolderOf(removed), '/work/chat', 'deleting the last project keeps it too');
+});
+
+test('the chat folder does not raise the schema version', () => {
+  // Raised deliberately NOT. A version bump makes every older Loom treat the
+  // whole manifest as unsupported and show no projects at all; dropping one
+  // optional preference is recoverable, an empty 项目 section is not.
+  assert.equal(SCHEMA_VERSION, 2, 'an additive optional key is not a schema break');
+  const older = { schemaVersion: 2, projects: [{ id: 'p1', title: 'One', members: ['ws-a'] }] };
+  assert.equal(readManifest(older).supported, undefined, 'a manifest with no chat folder still loads');
+  assert.equal(readManifest(older).projects.length, 1);
+  // And a manifest written by the NEWER build stays readable by this one.
+  const newer = { schemaVersion: 2, projects: [], chatsCwd: '/work/chat' };
+  assert.equal(readManifest(newer).projects.length, 0);
+  assert.equal(chatsFolderOf(readManifest(newer)), '/work/chat');
+});
+
+test('the comparable path folds separators and a trailing slash, and nothing else', () => {
+  // Used ONLY for the "this folder is already a workspace" hint. It must not be
+  // cleverer than that: attribution stays DSH's exact-equality rule, and a
+  // normalizer good enough for a hint is not good enough to group a session.
+  const same = [
+    'D:\\work\\app',
+    'D:/work/app',
+    'D:\\work\\app\\',
+    '  D:\\work\\app  ',
+  ];
+  const folded = same.map(normalizeComparablePath);
+  assert.equal(new Set(folded).size, 1, 'the same folder spelled four ways folds to one value');
+
+  assert.notEqual(normalizeComparablePath('D:\\work\\app'), normalizeComparablePath('D:\\work\\app2'));
+  assert.notEqual(normalizeComparablePath('D:\\work\\app'), normalizeComparablePath('D:\\work\\app\\sub'));
+  assert.equal(normalizeComparablePath(undefined), '');
+  assert.equal(normalizeComparablePath(null), '');
+  assert.equal(normalizeComparablePath(42), '');
 });
 
 test('a newer schema version is never reinterpreted', () => {

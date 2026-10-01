@@ -21,7 +21,7 @@ import { dirname, join } from 'node:path';
 
 import manifest from '../core/manifest.cjs';
 
-const { createEmptyManifest, readManifest, normalizeManifest, SCHEMA_VERSION } = manifest;
+const { chatsFolderOf, createEmptyManifest, readManifest, normalizeManifest, SCHEMA_VERSION } = manifest;
 
 const MANIFEST_DIR = 'projects';
 const MANIFEST_FILE = 'manifest.json';
@@ -89,9 +89,14 @@ async function loadManifest(dshHome, options = {}) {
 async function saveManifest(dshHome, value, options = {}) {
   const path = manifestPath(dshHome);
   const normalized = normalizeManifest(value, options);
+  const chatsCwd = chatsFolderOf(normalized);
   const payload = {
     schemaVersion: SCHEMA_VERSION,
     manifestVersion: MANIFEST_VERSION,
+    // A whole-manifest preference, so it is written beside `projects` rather
+    // than inside one. Omitted when unset, keeping a history-free manifest
+    // byte-identical to what earlier versions wrote.
+    ...(chatsCwd === undefined ? {} : { chatsCwd }),
     projects: normalized.projects,
   };
   const mkdirImpl = options.mkdir ?? mkdir;
