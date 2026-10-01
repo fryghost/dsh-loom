@@ -35,18 +35,31 @@
  *   - A session with no durable title never had a conversation, so it is not a
  *     conversation to list either.
  *
- * A subagent is detected by EITHER signal, not by `origin` alone.
+ * A subagent is detected by `origin`, exactly as the shipped browser does.
  *
- * `origin` is optional on the wire and is copied straight from the session
- * header (`api/session-controller/src/list.ts`, `listFields`), which only
- * carries it when the writing build put it there. Scanning this machine's 327
- * stored sessions found 211 headers with `parentSession` but only 209 with
- * `origin` — the stragglers carry `parentSession`, `delegationDepth` and
- * `isSeeded` instead, i.e. they were delegated by a build that predates the
- * `origin` field. Headers are never backfilled, so those sessions stay
- * `origin`-less forever, and a rule keyed on `origin` alone files them as
- * ordinary chats for good. A delegated session always has a parent, so
- * `parentId` is the durable signal and `origin` the fast one.
+ * This used to ALSO hide any session whose `parentId` differed from itself, on
+ * the reasoning that `origin` is optional on the wire and the stragglers that
+ * carry a parent without it were delegates from a build that predates the
+ * field. That reasoning was wrong, and it was wrong in the most expensive
+ * direction: `child-agent.ts` always writes `origin: 'subagent'`, while DSH's
+ * own `session.fork` (`api/session-controller/src/commands.ts`) writes
+ * `parentSession` and deliberately NOT `origin` — a fork of a conversation is
+ * an ordinary conversation, not a delegate of one. So "has a parent, has no
+ * origin" describes a FORK, which is a row the user very much wants to see.
+ *
+ * Measured on this machine's 271 session artifacts: the parent-without-origin
+ * population is a fork and an older copy — both ordinary rows. The pre-`origin`
+ * delegates the old rule was written for no longer exist in v4 at all
+ * (`origin` absent AND `delegationDepth > 0`: zero sessions). The rule
+ * therefore had no true positives left and one real cost: it hid the user's own
+ * forked conversations, and any migrated copy, from every section — while DSH's
+ * own browser went on showing them (`ui-workspace/src/client/tree.ts` hides
+ * `origin === 'subagent'` only; `parentId` there merely ORDERS a fork beside
+ * its parent, and a fork whose parent is absent is still listed).
+ *
+ * `parentId` is therefore not read here at all. Keying on `origin` alone is the
+ * shipped rule, and matching it is what keeps the two sidebars from disagreeing
+ * about which conversations exist.
  *
  * The title test carries a measured justification. `SessionSummary.title` is the
  * DURABLE title, absent until the host projects one, and the host writes it once
@@ -81,8 +94,11 @@
  * the absence is real, anything else means unknown, and unknown is shown.
  */
 function sessionVisible(summary, current, archived, projectionReady) {
-  const delegated = summary.origin === 'subagent'
-    || (summary.parentId !== undefined && summary.parentId !== summary.id);
+  // `origin` alone, matching the shipped browser. NOT `parentId`: DSH's own fork
+  // writes a parent and no origin, so that test hides ordinary forks — see the
+  // measured note above. `parentId` is still read by `deriveSections` for
+  // ordering, where it belongs.
+  const delegated = summary.origin === 'subagent';
   // Kept even while untitled:
   //   - the CURRENT session, because that row is the provisional New Session and
   //     the user is looking at it;

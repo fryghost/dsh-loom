@@ -37,7 +37,7 @@ var require_bridge = __commonJS({
 var require_sections = __commonJS({
   "src/core/sections.cjs"(exports2, module2) {
     function sessionVisible(summary, current, archived, projectionReady) {
-      const delegated = summary.origin === "subagent" || summary.parentId !== void 0 && summary.parentId !== summary.id;
+      const delegated = summary.origin === "subagent";
       const shell = projectionReady === true && (summary.title === void 0 || summary.title === "") && summary.id !== current && summary.running !== true;
       return !delegated && !archived.has(summary.id) && !shell && (!summary.blank || summary.id === current);
     }
@@ -447,6 +447,16 @@ var dictionaries = {
     deleteProjectHint: "\u53EA\u79FB\u9664\u8FD9\u4E2A\u9879\u76EE\u5206\u7EC4\uFF0C\u4E0D\u4F1A\u5220\u9664\u6587\u4EF6\u5939\u6216\u4F1A\u8BDD\u8BB0\u5F55\u3002",
     deleteWorkspaceHint: "\u53EA\u79FB\u9664\u8FD9\u4E2A\u5DE5\u4F5C\u533A\u767B\u8BB0\uFF0C\u4E0D\u4F1A\u5220\u9664\u6587\u4EF6\u5939\u6216\u4F1A\u8BDD\u8BB0\u5F55\u3002",
     pickFolderFailed: "\u6CA1\u6709\u9009\u62E9\u6587\u4EF6\u5939\u3002",
+    pickFolderTitle: "\u9009\u62E9\u6587\u4EF6\u5939",
+    pickFolderSelect: "\u9009\u62E9\u8FD9\u4E2A\u6587\u4EF6\u5939",
+    pickFolderEmpty: "\u8FD9\u4E2A\u6587\u4EF6\u5939\u91CC\u6CA1\u6709\u5B50\u6587\u4EF6\u5939",
+    pickFolderLoading: "\u52A0\u8F7D\u4E2D\u2026",
+    pickFolderFailedLoad: "\u8BFB\u53D6\u6587\u4EF6\u5939\u5931\u8D25\uFF1A{message}",
+    pickFolderCrumbs: "\u4F4D\u7F6E",
+    pickFolderTruncated: "\u5B50\u6587\u4EF6\u5939\u8FC7\u591A\uFF0C\u53EA\u663E\u793A\u5F00\u5934\u90E8\u5206\u3002",
+    pickFolderUnavailable: "\u8FD9\u4E2A\u754C\u9762\u6CA1\u6709\u53EF\u7528\u7684\u6587\u4EF6\u5939\u9009\u62E9\u5668\uFF0C\u8BF7\u6539\u7528\u76F4\u63A5\u586B\u5199\u8DEF\u5F84\u3002",
+    pickFolderManual: "\u624B\u52A8\u586B\u5199\u8DEF\u5F84",
+    pickFolderManualApply: "\u4F7F\u7528\u8FD9\u4E2A\u8DEF\u5F84",
     chatsFolder: "\u9ED8\u8BA4\u6587\u4EF6\u5939",
     setChatsFolder: "\u8BBE\u7F6E\u9ED8\u8BA4\u6587\u4EF6\u5939",
     clearChatsFolder: "\u6E05\u9664\u9ED8\u8BA4\u6587\u4EF6\u5939",
@@ -562,6 +572,16 @@ var dictionaries = {
     deleteProjectHint: "Removes this grouping only; folders and session logs are kept.",
     deleteWorkspaceHint: "Removes the registration only; folders and session logs are kept.",
     pickFolderFailed: "No folder was selected.",
+    pickFolderTitle: "Choose a folder",
+    pickFolderSelect: "Use this folder",
+    pickFolderEmpty: "No subfolders here",
+    pickFolderLoading: "Loading\u2026",
+    pickFolderFailedLoad: "Could not read that folder: {message}",
+    pickFolderCrumbs: "Location",
+    pickFolderTruncated: "Too many subfolders; only the beginning is shown.",
+    pickFolderUnavailable: "This interface has no folder chooser available \u2014 type the path instead.",
+    pickFolderManual: "Type a path",
+    pickFolderManualApply: "Use this path",
     chatsFolder: "Default folder",
     setChatsFolder: "Set default folder",
     clearChatsFolder: "Clear default folder",
@@ -1030,7 +1050,20 @@ var STYLES = `
   margin: 0; padding-left: 18px;
   display: flex; flex-direction: column; gap: 4px;
   color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px;
-}`;
+}
+/* The folder browser's rows. Reset of the host Button look, because these are
+   list items that happen to be buttons, not actions. */
+.loom-crumb, .loom-folder-row {
+  display: block; width: 100%; text-align: left;
+  padding: 4px 6px; border: 0; border-radius: 4px;
+  background: transparent; color: inherit;
+  font: inherit; cursor: pointer;
+}
+.loom-crumb { display: inline-block; width: auto; padding: 2px 4px; }
+.loom-crumb + .loom-crumb::before { content: '\u203A'; margin-right: 4px; opacity: 0.6; }
+.loom-crumb:hover, .loom-folder-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+/* Long paths must not widen the dialog past the viewport. */
+.loom-plan-list .loom-folder-row, .loom-crumb { overflow-wrap: anywhere; }`;
 function installStyles() {
   const id = "loom-styles";
   if (typeof document === "undefined") return () => {
@@ -1843,6 +1876,97 @@ function LoomSidebar({
     ))
   );
 }
+function FolderPickerModal({ initialPath, browse, t, onClose, onPicked }) {
+  const [listing, setListing] = React.useState(void 0);
+  const [failure, setFailure] = React.useState("");
+  const [manual, setManual] = React.useState("");
+  const [showManual, setShowManual] = React.useState(false);
+  const open = React.useCallback(async (path) => {
+    setFailure("");
+    try {
+      const value = await browse.list(path);
+      setListing(value);
+    } catch (cause) {
+      setFailure(interpolate(t("pickFolderFailedLoad"), { message: String(cause.message ?? cause) }));
+    }
+  }, [browse, t]);
+  React.useEffect(() => {
+    void open(initialPath);
+  }, [open, initialPath]);
+  const entries = listing?.entries ?? [];
+  return h(
+    Modal,
+    {
+      open: true,
+      onClose,
+      title: t("pickFolderTitle"),
+      description: listing === void 0 ? void 0 : listing.path,
+      closeLabel: t("close"),
+      footer: h(
+        React.Fragment,
+        null,
+        h(Button, { variant: "ghost", onClick: () => setShowManual((value) => !value) }, t("pickFolderManual")),
+        h(Button, { variant: "outline", onClick: onClose }, t("cancel")),
+        // Committing takes the folder being VIEWED, which is what a browser-shaped
+        // dialog implies — the alternative (select-then-confirm) needs a selection
+        // state that adds nothing to choosing a single directory.
+        h(Button, {
+          variant: "primary",
+          disabled: listing === void 0,
+          onClick: () => onPicked(listing.path)
+        }, t("pickFolderSelect"))
+      )
+    },
+    failure.length > 0 && h("div", { className: "loom-warn" }, failure),
+    showManual && h(
+      "div",
+      { className: "loom-plan" },
+      h(Input, {
+        value: manual,
+        placeholder: "C:\\path\\to\\folder",
+        "aria-label": t("pickFolderManual"),
+        onChange: (event) => setManual(event.target.value)
+      }),
+      h(Button, {
+        variant: "primary",
+        disabled: manual.trim().length === 0,
+        onClick: () => onPicked(manual.trim())
+      }, t("pickFolderManualApply"))
+    ),
+    listing === void 0 ? h("div", { className: "loom-empty-section" }, t("pickFolderLoading")) : h(
+      React.Fragment,
+      null,
+      // Every ancestor is a jump target, so the user can walk up without a
+      // dedicated ".." row. The list comes from the host, which is the only
+      // side that knows how to spell a path on this platform.
+      h(
+        "div",
+        { className: "loom-plan-list" },
+        ...(listing.crumbs ?? []).map((crumb) => h("button", {
+          key: crumb.path,
+          type: "button",
+          className: "loom-crumb",
+          onClick: () => {
+            void open(crumb.path);
+          }
+        }, crumb.name))
+      ),
+      entries.length === 0 ? h("div", { className: "loom-empty-section" }, t("pickFolderEmpty")) : h(
+        "div",
+        { className: "loom-plan-list" },
+        ...entries.map((entry) => h("button", {
+          key: entry.path,
+          type: "button",
+          className: "loom-folder-row",
+          onClick: () => {
+            void open(entry.path);
+          }
+        }, entry.name))
+      ),
+      listing.truncated === true && h("div", { className: "loom-empty-section" }, t("pickFolderTruncated"))
+    )
+  );
+}
 function MigrateModal({ sessionId, sessionTitle, snapshot, bridge, t, onClose, onDone, onArchive }) {
   const workspaces = (snapshot?.items ?? []).filter((item) => item.path !== void 0);
   const source = (snapshot?.items ?? []).find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(sessionId));
@@ -1989,6 +2113,8 @@ function LoomSidebarHost({ bridge, ctx }) {
     const [preflighting, setPreflighting] = React.useState(null);
     const [migrating, setMigrating] = React.useState(null);
     const [migrated, setMigrated] = React.useState(null);
+    const [picking, setPicking] = React.useState(null);
+    const folderResolve = React.useRef(void 0);
     const reload = React.useCallback(async () => {
       try {
         const value = await bridge2.getManifest();
@@ -2020,16 +2146,35 @@ function LoomSidebarHost({ bridge, ctx }) {
     const projects = manifest?.projects ?? [];
     const chatsCwd = typeof manifest?.chatsCwd === "string" ? manifest.chatsCwd : void 0;
     const workspaceForPath = (path) => (snapshot?.items ?? []).find((item) => comparablePath(item.path) === comparablePath(path));
+    const pickFolder = React.useCallback(async (initialPath) => {
+      const navigation = ctx2.get("uiWorkspace");
+      if (navigation === void 0) return { unavailable: true };
+      try {
+        const picked = await navigation.pickDirectory();
+        return typeof picked === "string" && picked.length > 0 ? { path: picked } : { cancelled: true };
+      } catch (cause) {
+        if (!String(cause?.message ?? cause).includes("native capability")) throw cause;
+      }
+      return await new Promise((resolve) => {
+        folderResolve.current = resolve;
+        setPicking({ initialPath });
+      });
+    }, [ctx2]);
+    const settlePicking = React.useCallback((outcome) => {
+      folderResolve.current?.(outcome);
+      folderResolve.current = void 0;
+      setPicking(null);
+    }, []);
     const startChat = React.useCallback(async () => {
       const navigation = ctx2.get("uiWorkspace");
       if (navigation === void 0) return;
       try {
         let target = chatsCwd;
         if (target === void 0) {
-          const picked = await navigation.pickDirectory();
-          if (typeof picked !== "string" || picked.length === 0) return;
-          target = picked;
-          await put({ chatsCwd: picked });
+          const picked = await pickFolder(void 0);
+          if (picked.path === void 0) return;
+          target = picked.path;
+          await put({ chatsCwd: picked.path });
         }
         const workspace = workspaceForPath(target);
         if (workspace !== void 0) {
@@ -2041,17 +2186,17 @@ function LoomSidebarHost({ bridge, ctx }) {
       } catch (cause) {
         setError(interpolate(t("saveFailed"), { message: cause.message }));
       }
-    }, [ctx2, chatsCwd, put, t]);
+    }, [ctx2, chatsCwd, pickFolder, put, t]);
     const setChatsFolder = React.useCallback(async (explicit) => {
       try {
-        const picked = explicit ?? await ctx2.get("uiWorkspace")?.pickDirectory();
+        const picked = explicit ?? (await pickFolder(chatsCwd)).path;
         if (typeof picked !== "string" || picked.length === 0) return;
         await put({ chatsCwd: picked });
         setNotice(workspaceForPath(picked) === void 0 ? "" : t("chatsFolderIsWorkspace"));
       } catch (cause) {
         setError(interpolate(t("saveFailed"), { message: cause.message }));
       }
-    }, [ctx2, put, t]);
+    }, [pickFolder, chatsCwd, put, t]);
     const clearChatsFolder = React.useCallback(() => {
       setNotice("");
       void put({ chatsCwd: void 0 });
@@ -2117,12 +2262,10 @@ function LoomSidebarHost({ bridge, ctx }) {
         // through DSH's services rather than through Loom's manifest: Loom
         // groups existing Workspaces and never mutates them.
         onNewWorkspace: async () => {
-          const navigation = ctx2.get("uiWorkspace");
-          if (navigation === void 0) return;
           try {
-            const picked = await navigation.pickDirectory();
-            if (typeof picked !== "string" || picked.length === 0) return;
-            await ctx2.workspaces.create({ path: picked });
+            const picked = await pickFolder(void 0);
+            if (picked.path === void 0) return;
+            await ctx2.workspaces.create({ path: picked.path });
           } catch (cause) {
             setError(interpolate(t("saveFailed"), { message: cause.message }));
           }
@@ -2132,6 +2275,24 @@ function LoomSidebarHost({ bridge, ctx }) {
           void ctx2.workspaces.delete(workspaceId).catch(() => {
           });
         }
+      }),
+      picking !== null && h(FolderPickerModal, {
+        initialPath: picking.initialPath,
+        // The two BROWSE verbs. Bound to `ctx` rather than to the roomier
+        // `listDirectory`/`createDirectory` on the navigation face for the same
+        // reason: they are the primitive pair the wire actually exposes.
+        browse: {
+          list: (path) => {
+            const navigation = ctx2.get("uiWorkspace");
+            if (navigation === void 0 || typeof navigation.listDirectory !== "function") {
+              return Promise.reject(new Error("no directory browser"));
+            }
+            return navigation.listDirectory(path);
+          }
+        },
+        t,
+        onClose: () => settlePicking({ cancelled: true }),
+        onPicked: (path) => settlePicking({ path })
       }),
       preflighting !== null && h(PreflightModal, {
         project: preflighting,

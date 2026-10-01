@@ -3,7 +3,51 @@
 本项目的版本号遵循 [语义化版本](https://semver.org/lang/zh-CN/)。
 清单格式（`$DSH_HOME/projects/manifest.json` 的 `schemaVersion`）与包版本号是**两条独立的轴**：后者可以升，前者只在清单结构真的变化时才升。
 
-每个已发布的版本都对应一个 git tag（`v0.2.0` … `v0.2.6`）。`0.1.0` 未打 tag——它是最初的提交，早于本文件开始记录。发版步骤见 [CONTRIBUTING.md](CONTRIBUTING.md#发版流程)。
+每个已发布的版本都对应一个 git tag（`v0.2.0` … `v0.2.7`）。`0.1.0` 未打 tag——它是最初的提交，早于本文件开始记录。发版步骤见 [CONTRIBUTING.md](CONTRIBUTING.md#发版流程)。
+
+## [0.2.7] - 2026-10-02
+
+修 0.2.6 带进来的两个缺陷，外加一个它暴露出来的老问题。**0.2.6 的迁移功能会在磁盘上生成 DSH 拒绝打开的会话日志**，这是本次最严重的一条。
+
+### 修复
+
+- **迁移出来的会话打不开：「current-generation delivery marker names the wrong Session」。** 迁移会把源会话已完成的回合**逐字复制**（含 105 条 `delivery-accepted` 投递水位，每条都署名**源会话**），但我当初**故意没写 `parentSession`**——理由是"带上血缘会被判为委派、从侧边栏消失"。
+
+  而 DSH 判定一份 seeded 日志是否合法，唯一的凭据就是这个字段（`session-format-v3-to-v4/src/validation.ts:117-121`）：
+
+  ```ts
+  deliveryId !== artifact.header.id
+    && !(artifact.header.parentSession !== undefined && event.seq < artifact.inheritedEventCount)
+  ```
+
+  没有它，105 条署名对不上的水位只能被读成"这条会话自己产生的水位，却签着别人的名字"→ **整份日志判为损坏**。DSH 自己的 fork 永远会写它（`session-controller/src/commands.ts:276`），所以全库 6 个 seeded 会话里只有我造的那一份缺。
+
+  **我拿一个"显示问题"换了一个"数据完整性问题"，方向完全错了。** 正确做法是照 DSH 的规矩把字段写全，然后改掉 Loom 那条过度的过滤规则——见下一条。
+
+- **Loom 会隐藏 DSH 自己的 fork，比 DSH 严。** Loom 原来把"有 parent、且 parent 不是自己"一律当委派隐藏（`src/core/sections.cjs`）。但 `child-agent.ts` **永远**写 `origin: 'subagent'`，而 DSH 的 `session.fork` 写 `parentSession` 却**故意不写** `origin`——所以"有父、无 origin"描述的正是 **fork**，是用户自己分叉出来的、当然要看到的会话。DSH 自己的浏览器只隐藏 `origin === 'subagent'`（`ui-workspace/src/client/tree.ts:244`），`parentId` 在那里只是把分叉排在父会话旁边。
+
+  这条规则现改为**只认 `origin`**，与 DSH 对齐。实测这台机器 271 份会话档案，被误伤的正是**用户自己的一个 fork**（`厦门TOD璞瑞`，2900 条事件）＋**所有迁移出来的副本**——DSH 一直显示着它们，Loom 却藏着，两个侧边栏对"存在哪些会话"的说法不一致。
+
+  旧规则当初是为"211 个有 parent、209 个有 origin"的落伍 subagent 加的；在 v4 里那类样本**一个都不剩**（`origin` 缺失且 `delegationDepth>0`：0 个），所以它已经没有真阳性，只剩下代价。
+
+- **「聊天」段的新建会话在远程/浏览式组合下直接报错：「保存失败：directory picker failed: directoryPicker.pick needs the native capability; the composed picker serves "browse"」。** 目录选择这一层有**两个互斥后端**：`native` 提供 `pick()`（一个系统对话框），`browse` 只提供 `list()`/`createDirectory()`。`uiWorkspace.pickDirectory()` 调的是 `pick()`，所以在 browse 组合上它**不是失败，是拒绝服务**——`directory-picker-auto` 在启动时按绑定地址判定，回环以外的、SSH 的、以及远程浏览器一律得到 browse。
+
+  原来的代码把这个拒绝原样抛给用户，还包成了"保存失败"（其实什么都没保存失败）。现在按该 seam 自己的规矩处理：**先试 `pick()`，拿到那句特定的拒绝就改用 Loom 自带的文件夹浏览器**（用 `list`/`createDirectory` 两个 browse 动词驱动），本机与远程都可用；两者都没有时按 DSH 的文档规则**隐藏入口**，而不是留一个点了必然报错的控件。
+
+  顺带修好了**「新建工作区」的 `+`**：它从 0.2.6 之前就是同一个写法，也就是说这个按钮在远程环境下**从来没能用过**，只是旁边没有对照物，所以一直没被发现。
+
+### 测试
+
+- **新增 `test/migration-artifact.test.js`（4 条），它问的问题和仓库里其他所有测试都不一样**：不是"我想写的字段在不在"，而是**"DSH 本尊收不收这份产物"**——直接 `import` DSH 真检出里的 `restoreReleasedV4Artifact`，把迁移的产物喂进去。
+
+  这才是 0.2.6 漏掉它的原因，必须记下来：**那 267 项测试里，每一条迁移断言都是拿测试自己写的 fixture 去对的**（`created.meta.cwd`、`isSeeded`、`seed.length` 三项全对）。没有一个测试把结果交给真正的消费者。fixture 和实现共享同一个错误假设时，两边都绿——这是本仓库第三次栽在同一件事上（0.2.4 手写信封、0.2.5 不悬停、0.2.6 自造 header）。
+
+  文件里还有一条**反向**用例：把 `parentSession` 删掉后同一位校验器必须报 `wrong Session`。否则将来 DSH 改了行为、或者这段校验被绕过，正例会悄悄退化成永远通过。
+
+- `test/client-mount.test.cjs` 增 5 条：browse 组合下弹出自带浏览器、取消不写任何东西、列目录失败单独报告（不是"保存失败"）；以及把 `uiWorkspace` 桩改成**会像生产一样拒绝**（旧桩是 `async () => options.pickDirectory ?? null`，**永远成功**——这正是 267 项测试对一个坏按钮无感的原因）。`Modal` 桩现在也渲染 `title`/`description`/`footer`：不渲染时，一个"提交键在 footer 里"的对话框看起来就是没有任何确认方式，关于它的测试根本写不出来。
+- `test/sections.test.cjs`：把"有父无 origin 也算委派"改成**断言反面**（fork 必须可见），并补一条真 subagent 仍被隐藏，免得规则被"删掉测试"式地满足。
+- `test/host-wiring.test.js`：原「the copy carries no lineage」**整条反转**为「the copy names its source」——它当初钉住的正是致病的那条信念。
+- `scripts/mutation-chats-and-migrate.cjs` 扩到 **9 处变异**，新增 M3（去掉 lineage，判据是**真校验器**用例）、M3b（恢复按 parent 隐藏）、M3c（退回"只调原生动词"）。
 
 ## [0.2.6] - 2026-10-01
 
@@ -28,7 +72,9 @@ DSH 里**没有**把会话搬到另一个工作区的办法，这是设计事实
 
 于是唯一的诚实做法是：**建一个 cwd 指向目标文件夹的新会话，历史取自源的已完成前缀，原会话交给调用方决定去留**（本版本归档）。截断点镜像 DSH 自己的「最后一个已完成回合」口径，纯函数实现在 `src/core/migration-plan.cjs`，每个拒绝理由都是具名的。
 
-复制体**刻意不带 `parentSession`、不带 `origin`**：Loom 的可见性规则把「有 parent 且 parent 不等于自己」一律判为委派并隐藏，带上血缘会让复制出来的会话从所有段里消失——看起来就像迁移失败。
+~~复制体**刻意不带 `parentSession`、不带 `origin`**：Loom 的可见性规则把「有 parent 且 parent 不等于自己」一律判为委派并隐藏，带上血缘会让复制出来的会话从所有段里消失——看起来就像迁移失败。~~
+
+> **这一条是错的，0.2.7 已改。** 不带 `parentSession` 会让 DSH 把复制体判为**损坏日志**，不是"从侧边栏消失"而是**根本打不开**。血缘必须写；该改的是 Loom 那条过宽的可见性规则。原文保留在此，因为下面「测试」一节正好解释了它为什么没被测试发现。
 
 ### 测试
 
@@ -37,6 +83,8 @@ DSH 里**没有**把会话搬到另一个工作区的办法，这是设计事实
 - `test/client-render.test.cjs` 增 7 条：三段各自的入口；「聊天」段的 `+` 与文案；默认文件夹菜单的「设置恒有、清除按需」；迁移弹窗的五条承诺、三种具名拒绝、拒绝时不显示复制计数。渲染桩现在会**保留 `Menu` 的 items 与 `Button` 的 `disabled`**——旧桩把两者都丢了，于是"菜单少了一行"和"确认键该灰却没灰"都测不出来。
 - `test/client-mount.test.cjs` 增 6 条：在**真实挂载**的宿主组件上做一次项目编辑，断言回写载荷仍带着 `chatsCwd`，以及**任何它没动过的键都不丢**；「聊天」段 `+` 的三条路径（取消选择是干净的 no-op、已登记文件夹走 `startSession`、未登记文件夹走 create + 导航打开）；设置与清除两个动词各自的效果。
 - 新增 `scripts/mutation-chats-and-migrate.cjs`：七处变异（拆掉「聊天」段入口／回写退回裸载荷／把两个文件夹动词并成一个哨兵／给复制体加血缘／用整份日志当 seed／跳过执行前的重新规划／忽略缺失的服务），逐个确认套件变红。写这个脚本时自己踩了一次：**只按 `not ok` 解析失败行是错的**——那是 TAP reporter 的写法，`node --test` 默认用 SPEC reporter，失败标记是 `✖`，所以第一版把六处全报成了"套件没抓到"。两种写法现在都认。
+
+> 这一节的变异里有一条（「给复制体加血缘」）**把缺陷当成了修复**：它断言的是"带上血缘会让套件变红"，而真相是**不带**才是缺陷。变异数量和绿红结果都没错，错的是它保护的结论。0.2.7 已把该变异反转，并新增一个用 DSH 真校验器断言的用例。
 - `test/dsh-02-transport.test.js` 与 `test/host-wiring.test.js` 里写死的端点个数改为**从 `BRIDGE_ENDPOINTS` 派生**：端点数再变时，这两处不该各改一遍，而它们藏得住的失败恰恰是"客户端调的路由没人挂"。
 
 ## [0.2.5] - 2026-09-30

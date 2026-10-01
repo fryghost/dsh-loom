@@ -762,10 +762,20 @@ test('migrateSession seeds a copy in the target folder and attaches it', async (
   }
 });
 
-test('the copy carries no lineage, which would hide it from every section', async () => {
-  // `src/core/sections.cjs` treats any session whose parent differs from itself
-  // as delegated and hides it. A copied conversation carrying `parentSession`
-  // would vanish from the sidebar and read as a failed move.
+test('the copy names its source, which DSH requires of a seeded log', async () => {
+  // INVERTED, and the inversion is the fix. This test used to assert
+  // `meta.parentSession === undefined`, on the reasoning that Loom's section
+  // filter hides any session whose parent differs from itself — so lineage would
+  // make the copy vanish. The reasoning was self-consistent and the code obeyed
+  // it, and the result was a session log DSH refuses to open: a seeded copy
+  // carries the source's delivery watermarks verbatim, and with no
+  // `parentSession` to explain them DSH reads them as corruption
+  // (`current-generation delivery marker names the wrong Session`).
+  //
+  // A display problem was traded for a data-integrity problem. The filter is
+  // what had to change (`src/core/sections.cjs` now keys on `origin`, matching
+  // DSH), never the artifact. `test/migration-artifact.test.js` is the test that
+  // would have caught it; this one now pins the field that must be present.
   const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
   try {
     const fake = migrationServices();
@@ -775,8 +785,12 @@ test('the copy carries no lineage, which would hide it from every section', asyn
     await handler('migrateSession', { sessionId: 'session-src', targetWorkspaceId: 'ws-beta' });
 
     const { meta } = fake.created[0];
-    assert.equal(meta.parentSession, undefined, 'fork lineage would hide the copy');
-    assert.equal(meta.origin, undefined, 'and so would a subagent origin');
+    assert.equal(meta.parentSession, 'session-src',
+      'a seeded copy MUST name its source, or DSH cannot explain the copied watermarks');
+    // `origin` stays unset, and that part of the old reasoning still holds: a
+    // copy of a conversation is not a delegate of one, and `origin: 'subagent'`
+    // is the ONE signal both DSH and Loom hide rows by.
+    assert.equal(meta.origin, undefined, 'a copy is not a subagent');
     assert.equal(meta.cwd, '/repos/beta');
   } finally {
     await rm(home, { recursive: true, force: true });

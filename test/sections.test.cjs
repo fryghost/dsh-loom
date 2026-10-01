@@ -362,32 +362,54 @@ test('subagent children never reach any section', () => {
   assert.deepEqual(all, ['parent'], 'only the parent session is a session in this list');
 });
 
-test('a delegated session is hidden even when its header has no origin', () => {
-  // The bug this pins: `origin` is optional on the wire and is copied straight
-  // from the session header, which only carries it when the WRITING build put it
-  // there. Scanning this machine's 347 stored sessions found 211 headers with
-  // `parentSession` but only 209 with `origin`; the stragglers carry
-  // `parentSession`, `delegationDepth` and `isSeeded` instead, because they were
-  // delegated by a build that predates the field. Headers are never backfilled,
-  // so an `origin`-only rule files those sessions as ordinary chats forever —
-  // which is exactly how subagents kept reappearing in 聊天.
-  const legacyChild = { ...summary('legacy', 'legacy child'), parentId: 'parent' };
+test('a fork with a parent but no origin is an ordinary session', () => {
+  // Reversed deliberately. This test used to assert the opposite, on the
+  // reasoning that an `origin`-less session carrying a parent must be a
+  // pre-`origin` delegate. That is not what the population is: `child-agent.ts`
+  // ALWAYS writes `origin: 'subagent'`, while DSH's own `session.fork`
+  // (`api/session-controller/src/commands.ts`) writes `parentSession` and
+  // deliberately NOT `origin`. So a parent with no origin is a FORK — an
+  // ordinary conversation, and one the user expects to see. The shipped browser
+  // agrees: it hides `origin === 'subagent'` only, and uses `parentId` merely to
+  // order a fork beside its parent (`tree.ts:199-207`). Hiding forks made Loom's
+  // sidebar disagree with DSH's about which conversations exist; on this machine
+  // it silently hid the user's own fork plus every migrated copy.
+  const fork = { ...summary('fork', 'forked conversation'), parentId: 'parent' };
   const { snapshot, sessionState } = stores({
-    workspaces: [workspace('a', 'Alpha', ['parent'])],
-    sessions: { parent: summary('parent', 'parent'), legacy: legacyChild },
-    ids: ['parent', 'legacy'],
+    workspaces: [workspace('a', 'Alpha', ['parent', 'fork'])],
+    sessions: { parent: summary('parent', 'parent'), fork },
+    ids: ['parent', 'fork'],
   });
 
   const { projectRows, workspaceRows, chatSessions } = deriveSections({ projects: [], snapshot, sessionState });
   const all = [...idsOf(projectRows), ...idsOf(workspaceRows), ...chatSessions.map(s => s.id)];
 
-  assert.deepEqual(all, ['parent'],
-    'a session with a parent is delegated, whatever its origin field says');
+  assert.deepEqual(all.sort(), ['fork', 'parent'],
+    'a fork carries a parent but is not a delegate, so both rows are listed');
+});
+
+test('a delegate is still hidden, by origin', () => {
+  // The other half, so the rule above cannot be satisfied by deleting the test
+  // entirely: a real subagent — the shape `child-agent.ts` writes, parent AND
+  // origin together — stays hidden.
+  const child = { ...summary('child', 'subagent child'), parentId: 'parent', origin: 'subagent' };
+  const { snapshot, sessionState } = stores({
+    workspaces: [workspace('a', 'Alpha', ['parent', 'child'])],
+    sessions: { parent: summary('parent', 'parent'), child },
+    ids: ['parent', 'child'],
+  });
+
+  const { projectRows, workspaceRows, chatSessions } = deriveSections({ projects: [], snapshot, sessionState });
+  const all = [...idsOf(projectRows), ...idsOf(workspaceRows), ...chatSessions.map(s => s.id)];
+
+  assert.deepEqual(all, ['parent'], 'a subagent is a delegate and is listed nowhere');
 });
 
 test('a self-referencing parent is not treated as delegation', () => {
   // Degenerate but cheap to guard: a row whose parent is itself is a root that
-  // happens to carry a stale id, not a child of anything.
+  // happens to carry a stale id, not a child of anything. (Under the origin-only
+  // rule this is doubly true, but the row must still be listed rather than
+  // filtered by some future parent-based test.)
   const selfParent = { ...summary('self', 'self'), parentId: 'self' };
   const { snapshot, sessionState } = stores({
     workspaces: [workspace('a', 'Alpha', ['self'])],

@@ -220,9 +220,23 @@ async function planMigrationWith(ctx, sessionId, targetWorkspaceId) {
  * itself when a seeded header's inherited count is shorter than its log, so
  * nothing here synthesizes events.
  *
- * `meta` deliberately carries NO `parentSession` and NO `origin`: Loom's own
- * section rule (`./core/sections.cjs`) hides any session whose parent differs
- * from itself, so lineage on the copy would make it vanish from the sidebar.
+ * `meta.parentSession` IS set, and it is not optional. A seeded copy carries
+ * the source's `delivery-accepted` watermarks verbatim, and each one names the
+ * SOURCE session. DSH admits a foreign-named watermark only while the header
+ * says the history was inherited — `assertReleasedV4Relationships` in
+ * `session-format-v3-to-v4/src/validation.ts` exempts it when
+ * `parentSession !== undefined && seq < inheritedEventCount`. With the field
+ * absent, all 105 watermarks read as "this session produced these, and they
+ * name someone else", the artifact is rejected as
+ * `current-generation delivery marker names the wrong Session`, and the session
+ * cannot be opened at all.
+ *
+ * An earlier version omitted it to dodge Loom's own section filter, which hid
+ * any session whose parent differed from itself. That traded a display problem
+ * for a CORRUPTION problem, and it is the wrong way round: the fix belongs in
+ * the filter (`./core/sections.cjs` now keys on `origin` alone, matching DSH),
+ * never in the artifact. `origin` stays unset — this is a copy of a
+ * conversation, not a delegate of it, so the copy is an ordinary session.
  *
  * @returns `{ ok: true, value }`, or `{ ok: false, code, message }`.
  */
@@ -277,6 +291,10 @@ async function migrateSessionWith(ctx, sessionId, targetWorkspaceId) {
       inheritedEventCount: seed.length,
       meta: {
         cwd: target.path,
+        // NOT optional — see this function's header. Without it the copied
+        // watermarks name a foreign session with nothing to explain them, and
+        // DSH rejects the whole log as corrupt.
+        parentSession: snapshot.session.id,
         isSeeded: true,
         ...agentPreset === undefined ? {} : { agentPreset },
       },

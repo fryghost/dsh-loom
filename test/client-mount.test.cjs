@@ -137,6 +137,13 @@ function loadBundle(React) {
     // The menu's ITEMS are rendered too, not dropped. A real Menu portals them
     // on open; the stub is always closed, so without this a verb no test could
     // reach would look identical to one that was never added.
+    //
+    // The Modal's `title`, `description`, `closeLabel` and `footer` are rendered
+    // for exactly the same reason, and the cost of NOT doing it was measured: a
+    // dialog whose commit button lives in `footer` appeared to have no way to
+    // confirm anything, so a test for "the user can choose" could not be written
+    // at all. Render what the component is actually handed, or the test is
+    // describing the stub rather than the product.
     stub[atom] = atom === 'Menu'
       ? props => React.createElement('span', { 'data-atom': atom },
           props?.anchor ?? null,
@@ -144,7 +151,19 @@ function loadBundle(React) {
             'span', { key: item.id, 'data-menu-item': item.id, onClick: props?.onSelect
               ? () => props.onSelect(item.id) : undefined }, item.label,
           )))
-      : props => React.createElement('span', { 'data-atom': atom }, props?.children ?? null);
+      : atom === 'Modal'
+        ? props => React.createElement('span', { 'data-atom': atom },
+            props?.title ?? null,
+            props?.description ?? null,
+            props?.children ?? null,
+            props?.footer ?? null)
+        : atom === 'Button'
+          ? props => React.createElement('button', {
+              type: 'button',
+              disabled: props?.disabled === true,
+              onClick: props?.onClick,
+            }, props?.children ?? null)
+          : props => React.createElement('span', { 'data-atom': atom }, props?.children ?? null);
   }
   for (const name of Object.keys(stub)) if (!names.has(name)) delete stub[name];
 
@@ -335,7 +354,27 @@ function mountWithRecordingBridge(
     get: name => {
       if (name !== 'uiWorkspace') return undefined;
       return {
-        pickDirectory: async () => options.pickDirectory ?? null,
+        /**
+         * The REAL refusal, reproduced.
+         *
+         * The old stub was `async () => options.pickDirectory ?? null`, i.e. it
+         * always succeeded — which is precisely why 267 tests passed while the
+         * chat `+` was broken on this machine. `pick` exists only on a `native`
+         * backend; a `browse` composition rejects with this exact message from
+         * `DirectoryPickerController.requireCapability`. A stub that cannot fail
+         * the way production fails tests nothing about production.
+         */
+        pickDirectory: async () => {
+          if (options.browseOnly === true) {
+            throw new Error('directory picker failed: directoryPicker.pick needs the native capability;'
+              + ' the composed picker serves "browse"');
+          }
+          return options.pickDirectory ?? null;
+        },
+        listDirectory: async path => options.listDirectory?.(path) ?? {
+          path: path ?? '/home/u', home: '/home/u', crumbs: [{ name: '/', path: '/', hidden: false }],
+          entries: [{ name: 'work', path: '/work', hidden: false }], truncated: false,
+        },
         startSession: id => { started.push(id); },
         openSession: id => { opened.push(id); },
         archiveSession: async () => {},
@@ -544,6 +583,109 @@ test('the 聊天 + creates directly for a folder that is no workspace', async t 
     assert.deepEqual(mounted.opened, ['session-new'],
       'the new session is opened through the navigation face');
     assert.deepEqual(mounted.writes, [], 'and a stored default folder is not rewritten');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
+});
+
+test('a browse-only composition opens the built-in folder browser', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // THE regression for the reported failure. On a `browse` composition `pick()`
+  // is not merely unavailable — it REJECTS, and the old code let that rejection
+  // surface as "保存失败". The right answer is the seam's own documented rule:
+  // switch on the capability and serve the interaction the backend does offer.
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(
+    React, ReactDOM, act, useSyncExternalStoreWithSelector,
+    { schemaVersion: 2, projects: [] },
+    { browseOnly: true },
+  );
+
+  try {
+    mounted.render();
+    await settle(act);
+
+    await act(async () => { chatsPlus(mounted.container).click(); });
+    await settle(act);
+
+    // The dialog is up, listing the level the host reported — NOT an error.
+    assert.ok(mounted.container.innerHTML.includes('pickFolderTitle'),
+      'the built-in browser must open instead of failing');
+    assert.ok(!mounted.container.innerHTML.includes('saveFailed'),
+      'a missing native chooser is not a save failure');
+    assert.ok(mounted.container.innerHTML.includes('work'),
+      'the host-supplied listing is rendered');
+
+    // Committing takes the folder being viewed.
+    const commit = [...mounted.container.querySelectorAll('button')]
+      .find(button => button.textContent === 'pickFolderSelect');
+    assert.ok(commit !== undefined, 'the browser must offer a way to choose');
+    await act(async () => { commit.click(); });
+    await settle(act);
+
+    assert.equal(mounted.writes.length, 1, 'the chosen folder is remembered');
+    assert.equal(mounted.writes[0].chatsCwd, '/home/u');
+    assert.deepEqual(mounted.started, [], 'and no session starts on the first click');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
+});
+
+test('dismissing the built-in browser writes nothing', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // Cancelling is a decision. A dismissal that still wrote a folder — or that
+  // reported an error — would be indistinguishable from a failure.
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(
+    React, ReactDOM, act, useSyncExternalStoreWithSelector,
+    { schemaVersion: 2, projects: [] },
+    { browseOnly: true },
+  );
+
+  try {
+    mounted.render();
+    await settle(act);
+    await act(async () => { chatsPlus(mounted.container).click(); });
+    await settle(act);
+
+    const cancel = [...mounted.container.querySelectorAll('button')]
+      .find(button => button.textContent === 'cancel');
+    assert.ok(cancel !== undefined, 'the browser must be dismissible');
+    await act(async () => { cancel.click(); });
+    await settle(act);
+
+    assert.deepEqual(mounted.writes, [], 'a dismissed chooser stores nothing');
+    assert.deepEqual(mounted.started, [], 'and starts nothing');
+    assert.ok(!mounted.container.innerHTML.includes('saveFailed'), 'and is not an error');
+  } finally {
+    await act(async () => { mounted.root.unmount(); });
+    mounted.container.remove();
+  }
+});
+
+test('an unusable listing is reported, never silently ignored', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  // The browse verbs can themselves fail (an unreadable directory). That is a
+  // real error and belongs in the dialog, where the user can pick another level
+  // — the distinction the old code collapsed by reporting everything the same way.
+  const { React, ReactDOM, act, useSyncExternalStoreWithSelector } = loadDom();
+  const mounted = mountWithRecordingBridge(
+    React, ReactDOM, act, useSyncExternalStoreWithSelector,
+    { schemaVersion: 2, projects: [] },
+    { browseOnly: true, listDirectory: () => { throw new Error('directory-unreadable'); } },
+  );
+
+  try {
+    mounted.render();
+    await settle(act);
+    await act(async () => { chatsPlus(mounted.container).click(); });
+    await settle(act);
+
+    assert.ok(mounted.container.innerHTML.includes('pickFolderFailedLoad'),
+      'a failed listing is shown as a listing failure');
+    assert.deepEqual(mounted.writes, [], 'and nothing is written');
   } finally {
     await act(async () => { mounted.root.unmount(); });
     mounted.container.remove();

@@ -273,6 +273,21 @@ get sessionIds() { return this.record.sessionIds.filter(id => sessionPath(id) ==
 
 「聊天」段的 `chatsCwd` 是同一类东西：它决定**新会话从哪开始**，不改变任何既有会话的归属。
 
+### 选文件夹：两种后端，Loom 都支持
+
+目录选择这一层有**两个互斥后端**，由 DSH 在启动时按绑定地址自动判定（`directory-picker-auto`）：
+
+| 后端 | 什么时候 | 提供的动词 |
+|---|---|---|
+| `native` | 本机回环绑定、非 SSH、Windows/macOS | `pick()` —— 一个系统对话框 |
+| `browse` | 其余情况，**包括任何远程浏览器** | 只有 `list()` / `createDirectory()` |
+
+`pick()` **只在 native 下存在**，在 browse 组合上它会抛 `directoryPicker.pick needs the native capability` —— 这不是失败，是**拒绝服务**。
+
+所以 Loom 先试 `pick()`，拿到那句特定的拒绝就改用**自带的文件夹浏览器**（用两个 browse 动词驱动，支持面包屑跳转与手填路径）。两者都没有时按 DSH 的规矩**隐藏入口**，而不是留一个点了必然报错的按钮。「新建工作区」的 `+` 走同一条路。
+
+> 0.2.6 直接调 `pick()` 并把拒绝包成了「保存失败」——什么都没保存失败，只是那个按钮在你的环境里不存在。顺带说明：「新建工作区」的 `+` 从 0.2.6 之前就是同一个写法，也就是说它**在远程环境下一直没能用过**，只是旁边没有对照物才没被发现。
+
 ### 迁移到其他工作区：为什么是复制，不是搬移
 
 **DSH 里没有把会话搬到另一个工作区的办法**，这是设计事实而不是缺 API：
@@ -298,7 +313,12 @@ get sessionIds() { return this.record.sessionIds.filter(id => sessionPath(id) ==
 | 复制成功但 attach 失败 | **部分成功**：新会话的 cwd 已经等于目标路径，Loom 的"居民"规则照样把它列在那个工作区下。删掉一个用户已经能打开的会话，比一个会自愈的账更糟 |
 | 复制成功但归档失败 | 部分成功：界面同时给出两个会话，原会话留在原位 |
 
-复制体**刻意不携带血缘**（`parentSession` / `origin`）：Loom 的可见性规则把"有 parent 且 parent 不等于自己"一律判为委派并隐藏，带上它复制体就会从所有段里消失，看起来像迁移失败。
+复制体**必须携带 `parentSession`**（源会话 id），同时**不带 `origin`**。这不是可选的：
+
+- 复制过来的历史里含着源的投递水位（`delivery-accepted`），每条都署名**源会话**。DSH 判定一份 seeded 日志是否合法，唯一凭据就是 `parentSession`——有它、且水位落在继承前缀内，才解释得通；没有它，DSH 只能读成"这条会话自己产生的水位却签着别人的名字"，**整份日志判为损坏、会话根本打不开**（`current-generation delivery marker names the wrong Session`）。
+- `origin` 仍然不写：复制的是**一段对话**，不是它的**委派**。`origin: 'subagent'` 是 DSH 与 Loom 共同据此隐藏行的唯一信号。
+
+> 0.2.6 曾**刻意不写 `parentSession`**，理由是"Loom 会把有父的会话当委派藏起来"。那条推理本身没错，但方向错了：它拿一个**显示问题**去换了**数据完整性问题**。该改的是 Loom 过宽的过滤规则（0.2.7 已改为只认 `origin`，与 DSH 一致），而不是产物。
 
 ## 数据与安全
 

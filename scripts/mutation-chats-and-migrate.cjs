@@ -1,22 +1,31 @@
 /**
- * MUTATION CHECK for the two behaviours added together in 0.2.6:
- * the 聊天 band's entry point, and the two ends of a workspace migration.
+ * MUTATION CHECK for the behaviours added in 0.2.6 and repaired in 0.2.7:
+ * the 聊天 band's entry point, both ends of a workspace migration, and the
+ * folder picker that has to work whichever capability the composition offers.
  *
  * A regression test that passes on the BROKEN code is worse than none: it
  * certifies the bug as fixed. This script injects each original defect back,
  * one mutation at a time, and asserts the named suite goes RED — then restores.
- * 0.2.5 shipped a real bug past 204 green tests, so the rule is not optional
- * here (see docs/CONTRIBUTING.md).
+ * 0.2.5 shipped a real bug past 204 green tests, and 0.2.6 shipped another past
+ * 267, so the rule is not optional here (see docs/CONTRIBUTING.md).
  *
  * The mutations are the fixes, reverted piece by piece:
  *
- *   M1  remove the 聊天 band's action      -> the client-render band tests
- *   M2  write the bare manifest payload    -> the client-mount merge tests
- *   M2b collapse the folder verbs          -> the client-mount folder-menu test
- *   M3  attach fork lineage to the copy    -> the host-wiring lineage test
- *   M4  seed the copy from the whole log   -> the host-wiring seed test
- *   M5  skip the re-plan before creating   -> the stale-plan test
- *   M6  ignore a missing service           -> the degradation test
+ *   M1   remove the 聊天 band's action     -> the client-render band tests
+ *   M2   write the bare manifest payload   -> the client-mount merge tests
+ *   M2b  collapse the folder verbs         -> the client-mount folder-menu test
+ *   M3   omit the source lineage           -> the REAL-VALIDATOR artifact test
+ *   M3b  hide forks by parent again        -> the sections fork test
+ *   M3c  never offer the built-in browser  -> the browse-fallback mount test
+ *   M4   seed the copy from the whole log  -> the host-wiring seed test
+ *   M5   skip the re-plan before creating  -> the stale-plan test
+ *   M6   ignore a missing service          -> the degradation test
+ *
+ * M3 is the one that matters most historically. Its suite is
+ * `test/migration-artifact.test.js`, which is the only test in the repository
+ * that hands the produced artifact to DSH itself. Every other migration test
+ * asserted fields against a fixture it had written, so all of them stayed green
+ * while the real logs were unopenable.
  *
  *   node scripts/mutation-chats-and-migrate.cjs
  *
@@ -31,10 +40,11 @@ const { join } = require('node:path');
 const ROOT = join(__dirname, '..');
 const CLIENT = join(ROOT, 'src', 'client.cjs');
 const HOST = join(ROOT, 'src', 'index.js');
+const SECTIONS = join(ROOT, 'src', 'core', 'sections.cjs');
 const BUNDLE = join(ROOT, 'dist', 'client.js');
 
-/** Both files this script may touch, backed up and restored together. */
-const FILES = [CLIENT, HOST, BUNDLE];
+/** Every file this script may touch, backed up and restored together. */
+const FILES = [CLIENT, HOST, SECTIONS, BUNDLE];
 
 const MUTATIONS = [
   {
@@ -102,22 +112,56 @@ const MUTATIONS = [
     expectFail: ['choosing a folder that is already a workspace says so'],
   },
   {
-    name: 'M3 attach fork lineage to the copy',
+    name: 'M3 omit the source lineage from the copy',
     file: HOST,
-    // A copied session carrying `parentSession` is classified as delegated by
-    // `sections.cjs` and hidden from EVERY section — it would read as a move
-    // that produced nothing.
+    // THE 0.2.6 DEFECT. A seeded copy carries the source's delivery watermarks
+    // verbatim, and DSH admits a foreign-named watermark only while
+    // `parentSession` explains it. Omit the field and the log is rejected as
+    // `current-generation delivery marker names the wrong Session`, so the
+    // session cannot be opened at all. 267 tests passed while this was broken,
+    // because every one of them asserted the header against a fixture it had
+    // written itself — the check that notices is DSH's own validator, in
+    // test/migration-artifact.test.js.
     apply: text => text.replace(
-      `      meta: {
-        cwd: target.path,
+      `        // NOT optional — see this function's header. Without it the copied
+        // watermarks name a foreign session with nothing to explain them, and
+        // DSH rejects the whole log as corrupt.
+        parentSession: snapshot.session.id,
         isSeeded: true,`,
-      `      meta: {
-        cwd: target.path,
-        parentSession: sessionId,
-        isSeeded: true,`,
+      `        isSeeded: true,`,
     ),
-    suite: 'test/host-wiring.test.js',
-    expectFail: ['the copy carries no lineage'],
+    suite: 'test/migration-artifact.test.js',
+    expectFail: ['the migrated copy is an artifact DSH accepts'],
+  },
+  {
+    name: 'M3b hide forks again, by parent instead of origin',
+    file: SECTIONS,
+    // The old rule. DSH's own fork writes `parentSession` and NOT `origin`, so
+    // keying on the parent hides ordinary forks — including every migrated copy
+    // and the user's own forked conversations — while DSH's browser goes on
+    // showing them. The two sidebars disagreeing about which conversations exist
+    // is the defect; the fix is to match the shipped rule.
+    apply: text => text.replace(
+      "  const delegated = summary.origin === 'subagent';",
+      `  const delegated = summary.origin === 'subagent'
+    || (summary.parentId !== undefined && summary.parentId !== summary.id);`,
+    ),
+    suite: 'test/sections.test.cjs',
+    expectFail: ['a fork with a parent but no origin is an ordinary session'],
+  },
+  {
+    name: 'M3c the built-in browser is never offered',
+    file: CLIENT,
+    // Reverting to "always call the native verb" — the state that produced
+    // `directoryPicker.pick needs the native capability` on every browse-only
+    // composition, surfaced to the user as a save failure.
+    apply: text => text.replace(
+      "        if (!String(cause?.message ?? cause).includes('native capability')) throw cause;",
+      '        throw cause;',
+    ),
+    suite: 'test/client-mount.test.cjs',
+    rebuild: true,
+    expectFail: ['a browse-only composition opens the built-in folder browser'],
   },
   {
     name: 'M4 seed the copy from the whole log',
@@ -268,7 +312,7 @@ try {
   // from the restored source so the working tree is byte-identical to before.
   build();
   console.log('');
-  console.log('restored src/client.cjs, src/index.js, and dist/client.js');
+  console.log('restored src/client.cjs, src/index.js, src/core/sections.cjs, and dist/client.js');
 }
 
 console.log('');

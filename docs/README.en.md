@@ -273,6 +273,21 @@ A project can name a "default starting point" — a new chat session starts ther
 
 Chats' `chatsCwd` is the same kind of thing: it decides **where a new session starts**, and changes no existing session's attribution.
 
+### Choosing a folder: two backends, and Loom supports both
+
+The directory-picking seam has **two mutually exclusive backends**, chosen at boot by DSH from the bind address (`directory-picker-auto`):
+
+| Backend | When | Verbs it serves |
+|---|---|---|
+| `native` | loopback bind, no SSH, Windows/macOS | `pick()` — one OS chooser |
+| `browse` | everything else, **including any remote browser** | only `list()` / `createDirectory()` |
+
+`pick()` **exists only under `native`**; on a browse composition it throws `directoryPicker.pick needs the native capability` — not a failure, a refusal to serve.
+
+So Loom tries `pick()` first, and on that specific refusal switches to its **own folder browser** (driven by the two browse verbs, with breadcrumb navigation and manual path entry). When neither capability exists the affordance is **hidden**, per DSH's own rule, rather than left as a button that can only fail. The Workspaces `+` takes the same route.
+
+> 0.2.6 called `pick()` directly and reported the refusal as "save failed" — nothing had failed to save; that button simply did not exist in your environment. For the record, the Workspaces `+` had the identical call since before 0.2.6, meaning it had **never worked on a remote browser**; nothing sat beside it to contrast with, so it went unnoticed.
+
 ### Moving to another workspace: why it copies instead of moving
 
 **DSH has no way to move a session to another workspace.** That is a design fact, not a missing API:
@@ -298,7 +313,12 @@ So "Move to another workspace" does this: **create a new session in the target f
 | The copy succeeds but attach fails | **Partial success**: the copy's cwd already equals the target path, so Loom's "resident" rule lists it under that workspace anyway. Deleting a session the user can already open is worse than an account that self-heals |
 | The copy succeeds but archiving fails | Partial success: the dialog names both sessions, and the original stays where it was |
 
-The copy deliberately carries **no lineage** (`parentSession` / `origin`): Loom's visibility rule treats any session whose parent differs from itself as delegated and hides it, so lineage would make the copy vanish from every section and read as a failed move.
+The copy **must** carry `parentSession` (the source session's id), and must **not** carry `origin`. This is not optional:
+
+- The copied history contains the source's delivery watermarks (`delivery-accepted`), each naming the **source** session. DSH's only evidence that a seeded log is legitimate is `parentSession` — with it, and with the watermarks inside the inherited prefix, they are explained; without it, DSH can only read them as "this session produced these and they name someone else", and **the whole log is rejected as corrupt and the session cannot be opened at all** (`current-generation delivery marker names the wrong Session`).
+- `origin` stays unset: what was copied is a **conversation**, not a **delegate** of one. `origin: 'subagent'` is the one signal both DSH and Loom hide rows by.
+
+> 0.2.6 deliberately omitted `parentSession`, reasoning that Loom hides any session with a parent. The reasoning was sound and the direction was wrong: it traded a **display** problem for a **data-integrity** problem. What had to change was Loom's over-broad filter — now keyed on `origin` alone, matching DSH — never the artifact.
 
 ## Data and safety
 

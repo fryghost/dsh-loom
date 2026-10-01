@@ -309,10 +309,33 @@ Loom 的规则：**结构性问题报告到 `dropped`，运行时可解析性问
 所以唯一诚实的实现是：**建一个 `cwd` 指向目标文件夹的新会话，历史取自源的已完成前缀，原会话交给调用方决定去留**（0.2.6 里由客户端归档）。三个由此而来的硬约束：
 
 1. **截断点必须是已完成回合的末尾。** 运行中的会话直接**拒绝**，而不是截断——它开着的回合在最后一个 `turn/end` 之后，复制前缀会静默丢掉正在进行的工作，而"我们复制了大部分"是用户事后无法发现的。
-2. **复制体不能带血缘。** 不设 `parentSession`、不设 `origin`：Loom 的可见性规则把"有 parent 且 parent 不等于自己"一律判为委派并隐藏，带上它复制体就会从所有段里消失，看起来像迁移失败。
+2. **复制体必须带 `parentSession`（源会话 id），但必须不带 `origin`。** 这一条 0.2.6 写反了，代价是一条**打不开的会话日志**，值得完整记下来。
+
+   复制的历史里含着源的投递水位（`delivery-accepted`），每条署名**源会话**。DSH 判定一份 seeded 日志是否合法，唯一凭据就是这个字段（`session-format-v3-to-v4/src/validation.ts:117-121`）：
+
+   ```ts
+   deliveryId !== artifact.header.id
+     && !(artifact.header.parentSession !== undefined && event.seq < artifact.inheritedEventCount)
+   ```
+
+   没有它，署名对不上的水位只能被读成"这条会话自己产生的水位却签着别人的名字"，于是整份日志按**损坏**拒绝。DSH 自己的 fork 永远写它（`commands.ts:276`）。
+
+   **0.2.6 之所以漏掉，是因为它为了绕开 Loom 自己过宽的过滤规则而故意不写。** 那条规则把"有 parent 且 parent 不等于自己"一律当委派隐藏；0.2.7 已改为**只认 `origin`**，与 DSH 对齐——因为 `child-agent.ts` 永远写 `origin: 'subagent'`，而 `session.fork` 写 `parentSession` 却不写 `origin`，所以"有父无 origin"描述的恰恰是 **fork**，是用户自己分叉出来、要看得到的会话。**教训是通用的：绕开一个显示问题，不能以牺牲产物的合法性为代价；该改过滤规则，不该改产物。**
+
+   `origin` 仍然不写：复制的是**一段对话**，不是它的**委派**。
 3. **宿主要能自己完成 seed。** 宿主半边**解析不到任何 `@deepseek-ai/*` 包**（`link:` 安装的插件只能从 profile 一侧解析），所以不能 `import buildForkSeed`。所幸不需要：`SessionStore.prepare` 在 seeded 头的 `inheritedEventCount` 短于日志时**自己补** `session/end-seed` 标记，因此"取前缀 + 给准确的 `inheritedEventCount`"就是一份合法 seed，不必手工合成任何事件。
 
 `src/core/migration-plan.cjs` 是这条链上唯一的纯函数：它产出计划或**具名拒绝理由**，宿主照着执行。理由具名（`session-running` / `no-completed-turn` / `same-workspace` / `no-cwd` / `source-missing` / `no-target`）是为了让界面能说人话——一个没有解释的灰按钮是这条规则要避免的失败形态。
+
+### 4.3 能力是协商出来的，不是猜出来的
+
+同一条教训的另一面，出在目录选择上。`ctx.directoryPicker` 是一个**按能力分支**的 seam：`native` 后端提供一个系统对话框（`pick()`），`browse` 后端只提供 `list()`/`createDirectory()`，两者互斥，由 `directory-picker-auto` 在启动时按绑定地址决定（回环以外、SSH、以及任何远程浏览器都得到 `browse`）。
+
+`uiWorkspace.pickDirectory()` 调的是 `pick()`，所以在 browse 组合上它**必然**抛 `directoryPicker.pick needs the native capability`。这个 seam 的文档写得很清楚：消费方要 `switch (capability().kind)`，**未知能力的默认行为是隐藏选择入口，而不是失败**（`host/directory-picker/src/index.ts:5-10`）；DSH 自己的浏览器就是这么做的（`WorkspaceBrowser.tsx:1287`，没有占位者时直接不渲染那个 `+`）。
+
+客户端的难处在于**能力种类过不了线**：wire 上暴露的是动词，不是 kind。于是可观测的替代信号就是那句特定的拒绝本身——试 `pick()`，认这句错，改用 browse 动词驱动的自带浏览器；两者都没有才隐藏入口。
+
+**这里和 §4.2 是同一个错误的两种形态**：把"我这台机器上行得通"当成了"这个接缝就是这样"。0.2.6 的测试给 `uiWorkspace` 打的桩是 `async () => options.pickDirectory ?? null`——**永远成功**，所以 267 项测试对一个在 browse 组合下必然报错的按钮完全没有感觉。桩必须能像生产一样失败，否则它测的是桩。
 
 ## 5. 测试策略
 
@@ -325,12 +348,19 @@ Loom 的规则：**结构性问题报告到 `dropped`，运行时可解析性问
 | 单元 | 持久化：原子写、损坏不覆盖、未来版本不解释 |
 | 单元 | 迁移计划：截断点语义、计数、六个具名拒绝、计划内不得有血缘 |
 | 单元 | 两个新端点：注册、降级、各类拒绝、seed 逐事件断言、附加失败算部分成功 |
-| 渲染 | 三段各自的入口；迁移弹窗的承诺与拒绝；回写载荷不丢键 |
+| **契约** | **把迁移产物交给 DSH 本尊的 `restoreReleasedV4Artifact`，问它收不收** |
+| 渲染 | 三段各自的入口；迁移弹窗的承诺与拒绝；回写载荷不丢键；browse 组合下弹自带浏览器 |
 | **e2e** | **真实文件系统上验证：cwd 在 A，B 的技能可见且正文可读** |
 
 最后一项是核心能力的证明，也是 Loom 与"仅 UI 分组"的分界线。
 
-回归测试必须**能变红**：`scripts/mutation-menu-anchor.cjs`（0.2.5）与 `scripts/mutation-chats-and-migrate.cjs`（0.2.6）把各自的修复逐块撤回，逐条断言套件失败。两个脚本都**不在 `test/` 下**——它们运行期改写 `src/` 并重建 `dist/`，而 `node --test` 并行执行 `test/` 里的每个文件。
+**契约那一行是 0.2.7 补上的，它值得单独说明**：0.2.6 的 267 项测试里，每一条迁移断言都是拿**测试自己写的 fixture** 去对的——`created.meta.cwd` 对、`isSeeded` 对、`seed.length` 也对，而真正的消费者 DSH 拒收那份产物。**没有一个测试把结果交给消费者。** 于是 fixture 和实现共享同一个错误假设，两边全绿，只有用户的磁盘上躺着一份打不开的日志。
+
+这已经是本仓库第三次栽在同一件事上，形态完全一致：**测试替掉了那个真正做判断的东西**。0.2.4 手写 RPC 信封（与错误实现互相印证）、0.2.5 静态渲染（从不悬停，而 bug 需要真实指针）、0.2.6 自造 header（与错误产物互相印证）。所以规则不只是"新增行为要有能变红的测试"，还有更具体的一条：**当产物要交给某个真实消费者，测试就必须交给那个消费者，而不是交给一个描述它的桩。**
+
+回归测试必须**能变红**：`scripts/mutation-menu-anchor.cjs`（0.2.5）与 `scripts/mutation-chats-and-migrate.cjs`（0.2.6 起，0.2.7 扩到 9 处）把各自的修复逐块撤回，逐条断言套件失败。两个脚本都**不在 `test/` 下**——它们运行期改写 `src/` 并重建 `dist/`，而 `node --test` 并行执行 `test/` 里的每个文件。
+
+**但变异测试也有它自己的盲区**：它只能验"修复被撤回时测试会不会红"，验不了"被它保护的那个结论本身对不对"。0.2.6 的变异脚本里有一条 M3「给复制体加血缘」，断言"带上血缘套件会变红"——绿红结果全对，**保护的结论却是反的**。变异测试检查的是测试的**灵敏度**，不是它的**正确性**；正确性来自让真消费者来判。
 
 ## 6. 未决问题
 
@@ -339,6 +369,7 @@ Loom 的规则：**结构性问题报告到 `dropped`，运行时可解析性问
 3. 是否需要 per-project 独立清单文件以利于版本控制。
 4. 跨文件夹写入是否值得提上游 RFC。
 5. **真正的会话搬移**是否值得提上游 RFC。§4.2 列出的六条约束里，前两条（头字段可改、日志随 cwd 迁移）是**存储层**的改动，第 5、6 条（fork 与 attach）会跟着自然解决。收益明确——用户心智里"这条对话属于那个项目"本就与 cwd 无关——但代价涉及会话日志的目录布局与降级兼容，不宜由插件单方面绕过。
+6. **上游是否该给"seeded 但缺 `parentSession`"一份更可读的报错。** 现在它会冒出 `current-generation delivery marker names the wrong Session`，指向的是投递水位而不是真正缺失的字段。这是 DSH 自身的改动，Loom 没有动。反过来说：这条规则本身是对的——它抓住的正是"水位签名对不上、又没有任何继承声明"这种真实的矛盾，0.2.6 那份日志确实是坏的。
 
 ## 7. 源码核查位置
 

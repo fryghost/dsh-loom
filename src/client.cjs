@@ -144,6 +144,16 @@ const dictionaries = {
     deleteProjectHint: '只移除这个项目分组，不会删除文件夹或会话记录。',
     deleteWorkspaceHint: '只移除这个工作区登记，不会删除文件夹或会话记录。',
     pickFolderFailed: '没有选择文件夹。',
+    pickFolderTitle: '选择文件夹',
+    pickFolderSelect: '选择这个文件夹',
+    pickFolderEmpty: '这个文件夹里没有子文件夹',
+    pickFolderLoading: '加载中…',
+    pickFolderFailedLoad: '读取文件夹失败：{message}',
+    pickFolderCrumbs: '位置',
+    pickFolderTruncated: '子文件夹过多，只显示开头部分。',
+    pickFolderUnavailable: '这个界面没有可用的文件夹选择器，请改用直接填写路径。',
+    pickFolderManual: '手动填写路径',
+    pickFolderManualApply: '使用这个路径',
     chatsFolder: '默认文件夹',
     setChatsFolder: '设置默认文件夹',
     clearChatsFolder: '清除默认文件夹',
@@ -259,6 +269,16 @@ const dictionaries = {
     deleteProjectHint: 'Removes this grouping only; folders and session logs are kept.',
     deleteWorkspaceHint: 'Removes the registration only; folders and session logs are kept.',
     pickFolderFailed: 'No folder was selected.',
+    pickFolderTitle: 'Choose a folder',
+    pickFolderSelect: 'Use this folder',
+    pickFolderEmpty: 'No subfolders here',
+    pickFolderLoading: 'Loading…',
+    pickFolderFailedLoad: 'Could not read that folder: {message}',
+    pickFolderCrumbs: 'Location',
+    pickFolderTruncated: 'Too many subfolders; only the beginning is shown.',
+    pickFolderUnavailable: 'This interface has no folder chooser available — type the path instead.',
+    pickFolderManual: 'Type a path',
+    pickFolderManualApply: 'Use this path',
     chatsFolder: 'Default folder',
     setChatsFolder: 'Set default folder',
     clearChatsFolder: 'Clear default folder',
@@ -736,7 +756,20 @@ const STYLES = `
   margin: 0; padding-left: 18px;
   display: flex; flex-direction: column; gap: 4px;
   color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 18px;
-}`;
+}
+/* The folder browser's rows. Reset of the host Button look, because these are
+   list items that happen to be buttons, not actions. */
+.loom-crumb, .loom-folder-row {
+  display: block; width: 100%; text-align: left;
+  padding: 4px 6px; border: 0; border-radius: 4px;
+  background: transparent; color: inherit;
+  font: inherit; cursor: pointer;
+}
+.loom-crumb { display: inline-block; width: auto; padding: 2px 4px; }
+.loom-crumb + .loom-crumb::before { content: '›'; margin-right: 4px; opacity: 0.6; }
+.loom-crumb:hover, .loom-folder-row:hover { background: var(--dsw-alias-interactive-bg-hover); }
+/* Long paths must not widen the dialog past the viewport. */
+.loom-plan-list .loom-folder-row, .loom-crumb { overflow-wrap: anywhere; }`;
 
 function installStyles() {
   const id = 'loom-styles';
@@ -1618,6 +1651,114 @@ function LoomSidebar({
 }
 
 /**
+ * An in-app folder browser built from the BROWSE primitives.
+ *
+ * Why this exists at all. The directory-picking seam has two interchangeable
+ * backends, and they expose different verbs
+ * (`host/directory-picker/src/index.ts`): a `native` backend offers
+ * `pick()` — one OS chooser — while a `browse` backend offers only
+ * `list()`/`createDirectory()`. `uiWorkspace.pickDirectory()` calls `pick()`
+ * unconditionally, so on a `browse` composition it rejects with
+ * `directoryPicker.pick needs the native capability; the composed picker serves
+ * "browse"` (raised by `DirectoryPickerController.requireCapability`). Which
+ * backend a machine gets is decided at boot by `directory-picker-auto`: a
+ * loopback-bound, non-SSH Windows/macOS host gets `native`, everything else —
+ * notably any remote browser — gets `browse`.
+ *
+ * So the correct consumer does what the seam's own documentation says and
+ * switches on `capability().kind`, except that the capability is not visible
+ * from the client: the wire exposes the verbs, not the kind. The verbs are
+ * observable instead — `pick` failing with that specific refusal IS the
+ * capability test. This dialog is the answer for the browse case, and the
+ * caller tries `pick()` first so the common local case still gets the real OS
+ * chooser rather than a worse reimplementation of it.
+ *
+ * Deliberately a folder BROWSER and not a path text box: it is the same
+ * interaction DSH's own `ui-directory-picker-browse` package shows in the
+ * shipped New-Workspace flow, so the two entry points behave alike.
+ */
+function FolderPickerModal({ initialPath, browse, t, onClose, onPicked }) {
+  const [listing, setListing] = React.useState(undefined);
+  const [failure, setFailure] = React.useState('');
+  const [manual, setManual] = React.useState('');
+  const [showManual, setShowManual] = React.useState(false);
+
+  const open = React.useCallback(async path => {
+    setFailure('');
+    try {
+      const value = await browse.list(path);
+      setListing(value);
+    } catch (cause) {
+      setFailure(interpolate(t('pickFolderFailedLoad'), { message: String(cause.message ?? cause) }));
+    }
+  }, [browse, t]);
+
+  // Opens at the caller's hint (the currently configured folder, when there is
+  // one) so "change my default folder" lands where the user already is.
+  React.useEffect(() => { void open(initialPath); }, [open, initialPath]);
+
+  const entries = listing?.entries ?? [];
+
+  return h(Modal, {
+    open: true,
+    onClose,
+    title: t('pickFolderTitle'),
+    description: listing === undefined ? undefined : listing.path,
+    closeLabel: t('close'),
+    footer: h(React.Fragment, null,
+      h(Button, { variant: 'ghost', onClick: () => setShowManual(value => !value) }, t('pickFolderManual')),
+      h(Button, { variant: 'outline', onClick: onClose }, t('cancel')),
+      // Committing takes the folder being VIEWED, which is what a browser-shaped
+      // dialog implies — the alternative (select-then-confirm) needs a selection
+      // state that adds nothing to choosing a single directory.
+      h(Button, {
+        variant: 'primary',
+        disabled: listing === undefined,
+        onClick: () => onPicked(listing.path),
+      }, t('pickFolderSelect'))),
+  },
+    failure.length > 0 && h('div', { className: 'loom-warn' }, failure),
+
+    showManual && h('div', { className: 'loom-plan' },
+      h(Input, {
+        value: manual,
+        placeholder: 'C:\\path\\to\\folder',
+        'aria-label': t('pickFolderManual'),
+        onChange: event => setManual(event.target.value),
+      }),
+      h(Button, {
+        variant: 'primary',
+        disabled: manual.trim().length === 0,
+        onClick: () => onPicked(manual.trim()),
+      }, t('pickFolderManualApply'))),
+
+    listing === undefined
+      ? h('div', { className: 'loom-empty-section' }, t('pickFolderLoading'))
+      : h(React.Fragment, null,
+          // Every ancestor is a jump target, so the user can walk up without a
+          // dedicated ".." row. The list comes from the host, which is the only
+          // side that knows how to spell a path on this platform.
+          h('div', { className: 'loom-plan-list' },
+            ...(listing.crumbs ?? []).map(crumb => h('button', {
+              key: crumb.path,
+              type: 'button',
+              className: 'loom-crumb',
+              onClick: () => { void open(crumb.path); },
+            }, crumb.name))),
+          entries.length === 0
+            ? h('div', { className: 'loom-empty-section' }, t('pickFolderEmpty'))
+            : h('div', { className: 'loom-plan-list' },
+                ...entries.map(entry => h('button', {
+                  key: entry.path,
+                  type: 'button',
+                  className: 'loom-folder-row',
+                  onClick: () => { void open(entry.path); },
+                }, entry.name))),
+          listing.truncated === true
+            && h('div', { className: 'loom-empty-section' }, t('pickFolderTruncated'))));
+}
+
+/**
  * "Move this conversation to another workspace", as a dialog that explains
  * itself BEFORE anything happens.
  *
@@ -1808,6 +1949,15 @@ function LoomSidebarHost({ bridge, ctx }) {
     const [preflighting, setPreflighting] = React.useState(null);
     const [migrating, setMigrating] = React.useState(null);
     const [migrated, setMigrated] = React.useState(null);
+    /**
+     * The folder browser, when the native chooser is unavailable.
+     *
+     * `folderResolve` carries the pending `pickFolder` promise across the dialog
+     * rather than stashing it in state: state updates are asynchronous and a
+     * ref keeps the settle path synchronous with the click that caused it.
+     */
+    const [picking, setPicking] = React.useState(null);
+    const folderResolve = React.useRef(undefined);
 
     const reload = React.useCallback(async () => {
       try {
@@ -1865,6 +2015,54 @@ function LoomSidebarHost({ bridge, ctx }) {
       .find(item => comparablePath(item.path) === comparablePath(path));
 
     /**
+     * Ask for a folder, using whichever picking capability this composition has.
+     *
+     * `uiWorkspace.pickDirectory()` is the native verb and ONLY the native verb:
+     * on a `browse` composition it rejects with `directoryPicker.pick needs the
+     * native capability` (`DirectoryPickerController.requireCapability`), which
+     * is a refusal to serve, not a failure to try. The client cannot read the
+     * capability kind — the wire exposes verbs, not kinds — so the refusal
+     * itself is the signal. An earlier version let that error reach the user as
+     * "保存失败", which is both alarming and wrong: nothing failed to save, and
+     * the folder chooser simply was not there.
+     *
+     * Resolves `{ path }` when a folder was chosen, `{ cancelled: true }` when
+     * the user dismissed a chooser (a decision, not an error), and
+     * `{ unavailable: true }` when neither capability exists — the caller then
+     * hides the affordance rather than leaving a control that can only fail,
+     * which is the seam's own documented rule for an unknown kind.
+     *
+     * Declared BEFORE its callers on purpose: these are `const` bindings, so a
+     * later declaration is a temporal-dead-zone ReferenceError at first render,
+     * not a hoisted function.
+     */
+    const pickFolder = React.useCallback(async initialPath => {
+      const navigation = ctx.get('uiWorkspace');
+      if (navigation === undefined) return { unavailable: true };
+      try {
+        const picked = await navigation.pickDirectory();
+        // A null result is a dismissal; only a THROW means the verb is absent.
+        return typeof picked === 'string' && picked.length > 0 ? { path: picked } : { cancelled: true };
+      } catch (cause) {
+        if (!String(cause?.message ?? cause).includes('native capability')) throw cause;
+      }
+      // Browse-only composition: Loom's own browser, driven by the two browse
+      // verbs the wire does expose. The promise settles when the dialog does,
+      // so callers read one shape whichever capability served them.
+      return await new Promise(resolve => {
+        folderResolve.current = resolve;
+        setPicking({ initialPath });
+      });
+    }, [ctx]);
+
+    /** Close the folder browser, settling whatever was waiting on it. */
+    const settlePicking = React.useCallback(outcome => {
+      folderResolve.current?.(outcome);
+      folderResolve.current = undefined;
+      setPicking(null);
+    }, []);
+
+    /**
      * Start a conversation with no folder of its own.
      *
      * With no default folder the picker runs FIRST and the choice is remembered,
@@ -1878,10 +2076,12 @@ function LoomSidebarHost({ bridge, ctx }) {
       try {
         let target = chatsCwd;
         if (target === undefined) {
-          const picked = await navigation.pickDirectory();
-          if (typeof picked !== 'string' || picked.length === 0) return;
-          target = picked;
-          await put({ chatsCwd: picked });
+          const picked = await pickFolder(undefined);
+          // A dismissal is a decision; an unavailable chooser is reported once,
+          // in the folder menu, where the user can act on it — not on every `+`.
+          if (picked.path === undefined) return;
+          target = picked.path;
+          await put({ chatsCwd: picked.path });
         }
         // An already-registered folder goes through DSH's own New Session flow,
         // which reuses a blank session instead of piling up duplicates.
@@ -1897,11 +2097,11 @@ function LoomSidebarHost({ bridge, ctx }) {
       } catch (cause) {
         setError(interpolate(t('saveFailed'), { message: cause.message }));
       }
-    }, [ctx, chatsCwd, put, t]);
+    }, [ctx, chatsCwd, pickFolder, put, t]);
 
     const setChatsFolder = React.useCallback(async explicit => {
       try {
-        const picked = explicit ?? await ctx.get('uiWorkspace')?.pickDirectory();
+        const picked = explicit ?? (await pickFolder(chatsCwd)).path;
         if (typeof picked !== 'string' || picked.length === 0) return;
         await put({ chatsCwd: picked });
         // The folder is stored either way — it is a valid choice. But when it
@@ -1912,7 +2112,7 @@ function LoomSidebarHost({ bridge, ctx }) {
       } catch (cause) {
         setError(interpolate(t('saveFailed'), { message: cause.message }));
       }
-    }, [ctx, put, t]);
+    }, [pickFolder, chatsCwd, put, t]);
 
     const clearChatsFolder = React.useCallback(() => {
       // `undefined` is normalized away by the host, so this removes the key
@@ -1984,14 +2184,16 @@ function LoomSidebarHost({ bridge, ctx }) {
         // through DSH's services rather than through Loom's manifest: Loom
         // groups existing Workspaces and never mutates them.
         onNewWorkspace: async () => {
-          const navigation = ctx.get('uiWorkspace');
-          if (navigation === undefined) return;
           try {
-            // The shell's own picker, so the chosen folder lands in the same
-            // registry the native browser reads.
-            const picked = await navigation.pickDirectory();
-            if (typeof picked !== 'string' || picked.length === 0) return;
-            await ctx.workspaces.create({ path: picked });
+            // The same chooser the 聊天 band uses, so a browse-only composition
+            // can register a workspace at all. This call site predates that work
+            // and had the identical defect: it reached for the native verb
+            // directly, so "new workspace" could only ever fail on a remote
+            // browser — it just had nothing to contrast with, which is why it
+            // went unnoticed.
+            const picked = await pickFolder(undefined);
+            if (picked.path === undefined) return;
+            await ctx.workspaces.create({ path: picked.path });
           } catch (cause) {
             setError(interpolate(t('saveFailed'), { message: cause.message }));
           }
@@ -2003,6 +2205,27 @@ function LoomSidebarHost({ bridge, ctx }) {
           // session logs, so this needs no confirmation dialog.
           void ctx.workspaces.delete(workspaceId).catch(() => {});
         },
+      }),
+
+      picking !== null && h(FolderPickerModal, {
+        initialPath: picking.initialPath,
+        // The two BROWSE verbs. Bound to `ctx` rather than to the roomier
+        // `listDirectory`/`createDirectory` on the navigation face for the same
+        // reason: they are the primitive pair the wire actually exposes.
+        browse: {
+          list: path => {
+            const navigation = ctx.get('uiWorkspace');
+            if (navigation === undefined || typeof navigation.listDirectory !== 'function') {
+              return Promise.reject(new Error('no directory browser'));
+            }
+            // An absent path means "the home directory" to the host, which is
+            // the right first level when there is nothing configured yet.
+            return navigation.listDirectory(path);
+          },
+        },
+        t,
+        onClose: () => settlePicking({ cancelled: true }),
+        onPicked: path => settlePicking({ path }),
       }),
 
       preflighting !== null && h(PreflightModal, {
