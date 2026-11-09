@@ -34,6 +34,7 @@ const {
   Button, Tag, StateDot, Modal, Input, Menu,
   IconPlusOutlineRegular, IconChevronDownOutlineRegular,
   IconSearchOutlineRegular, IconCloseOutlineRegular,
+  IconPlanOutlineRegular, IconFolderOpenOutlineRegular, IconNewChatOutlineRegular,
   IconEllipsisOutlineRegular, IconEditOutlineRegular, IconTrashOutlineRegular,
   IconBranchOutlineRegular, IconArchiveOutlineRegular, IconListPenOutlineRegular,
   IconShareOutlineRegular,
@@ -515,7 +516,7 @@ const STYLES = `
   margin: 0 0 8px; padding: 0 4px 0 6px;
   border: none;
   border-radius: var(--dsw-radius-sm);
-  background: transparent;
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 5%, transparent);
   color: var(--dsw-alias-label-secondary);
   /* Drawn inside the box and OUT of the layout flow. A transparent border keeps
      layout stable too, but still offsets everything inside it by half a pixel —
@@ -524,7 +525,7 @@ const STYLES = `
   outline-offset: -0.5px;
   transition: outline-color 150ms var(--ds-ease-in-out);
 }
-/* The hairline appears only on approach, so the resting state stays flat. */
+/* Focus strengthens the outline without shifting the search contents. */
 .loom-search:hover,
 .loom-search:focus-within { outline-color: var(--dsw-alias-border-l4); }
 /* The same 16px leading slot the tree rows use, so this glyph centres on the
@@ -534,7 +535,7 @@ const STYLES = `
 .loom-search-icon {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 16px; height: 16px;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-state-business-primary);
 }
 .loom-search-input {
   flex: 1; width: 0; min-width: 0;
@@ -585,16 +586,29 @@ const STYLES = `
 .loom-section-title {
   flex: 1; min-width: 0;
   display: flex; align-items: center; gap: 6px;
-  height: 24px; padding: 0 2px;
+  height: 28px; padding: 0 2px;
   border: none; border-radius: 6px;
   background: transparent;
-  color: var(--dsw-alias-label-tertiary);
+  color: var(--dsw-alias-label-secondary);
   cursor: pointer; text-align: left;
   font-size: 12px; line-height: 20px; font-weight: 600;
   letter-spacing: .04em;
 }
-.loom-section-title:hover { color: var(--dsw-alias-label-primary); }
-.loom-section-count { font-weight: 500; letter-spacing: 0; }
+.loom-section-title:hover { color: var(--dsw-alias-label-primary); background: var(--dsw-alias-interactive-bg-hover); }
+.loom-section-glyph {
+  display: inline-flex; align-items: center; justify-content: center;
+  flex: none; width: 22px; height: 22px; border-radius: 7px;
+  color: var(--loom-section-accent);
+  background: color-mix(in srgb, var(--loom-section-accent) 13%, transparent);
+}
+.loom-section-projects { --loom-section-accent: var(--dsw-alias-state-business-primary); }
+.loom-section-workspaces { --loom-section-accent: var(--dsw-alias-state-warn-label); }
+.loom-section-chats { --loom-section-accent: var(--dsw-alias-state-success-primary); }
+.loom-section-count {
+  padding: 0 5px; min-width: 16px; border-radius: 8px;
+  background: var(--dsw-alias-interactive-bg-hover);
+  text-align: center; font-size: 11px; font-weight: 500; letter-spacing: 0;
+}
 /* A band's own actions. NOT the loom-actions class: that one is hidden until
    its ROW is hovered, which is right for a row whose timestamp it replaces and
    wrong for a section heading — the one control that starts a conversation
@@ -628,7 +642,7 @@ const STYLES = `
 .loom-group-name {
   flex: 1; min-width: 0;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  font-size: 14px; line-height: 20px;
+  font-size: 14px; line-height: 20px; font-weight: 600;
 }
 /* The projects claiming this folder, at the caption step (12px) so it reads as
    an annotation on the row rather than a second name competing with it. It
@@ -684,6 +698,11 @@ const STYLES = `
 .loom-sidebar .loom-row { color: var(--dsw-alias-label-secondary); }
 .loom-sidebar .loom-row-current,
 .loom-sidebar .loom-row:hover { color: var(--dsw-alias-label-primary); }
+.loom-sidebar .loom-row-current {
+  background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 12%, transparent);
+  box-shadow: inset 2px 0 var(--dsw-alias-state-business-primary);
+  font-weight: 600;
+}
 .loom-title {
   flex: 1; min-width: 0; margin: 0 6px 0 4px;
   overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
@@ -1495,8 +1514,10 @@ function LoomSidebar({
 
   const sectionHead = (id, label, count, action, first = false) => {
     const open = !hiddenSections.has(id);
+    const Icon = id === 'projects' ? IconPlanOutlineRegular
+      : id === 'workspaces' ? IconFolderOpenOutlineRegular : IconNewChatOutlineRegular;
     return h('div', {
-      className: first ? 'loom-section-head loom-section-head-first' : 'loom-section-head',
+      className: `${first ? 'loom-section-head loom-section-head-first' : 'loom-section-head'} loom-section-${id}`,
     },
       h('button', {
         type: 'button',
@@ -1507,6 +1528,7 @@ function LoomSidebar({
       },
         h('span', { className: open ? 'loom-twisty' : 'loom-twisty loom-twisty-collapsed' },
           h(IconChevronDownOutlineRegular, { size: 14 })),
+        h('span', { className: 'loom-section-glyph', 'aria-hidden': true }, h(Icon, { size: 14 })),
         h('span', null, label),
         count > 0 && h('span', { className: 'loom-section-count' }, String(count)),
       ),

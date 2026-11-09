@@ -42,13 +42,10 @@ test('a section band puts its space below the rule, not above it', () => {
     'a band needs space BELOW its rule, or it reads as a footer of the group above');
 });
 
-test('the sidebar search matches the shipped control, not the dialog Input atom', () => {
-  // The Input atom is a dialog-form control: 32px, filled, 12px radius, 14px
-  // text. Dropped into the sidebar it became the only opaque box in a column
-  // whose whole language is "transparent at rest, filled on hover".
+test('the sidebar search uses a subtle tint without changing its geometry', () => {
   const rule = /\.loom-search\s*\{([^}]*)\}/.exec(styles)[1];
   assert.match(rule, /height:\s*28px/, 'the shipped sidebar search is 28px tall');
-  assert.match(rule, /background:\s*transparent/, 'it rests transparent, like every row');
+  assert.match(rule, /background:\s*color-mix\(in srgb, var\(--dsw-alias-state-business-primary\) 5%, transparent\)/);
   assert.match(rule, /border-radius:\s*var\(--dsw-radius-sm\)/, 'radius-sm (8px), not the atom radius');
   assert.doesNotMatch(rule, /background:\s*var\(--dsw-alias-bg-layer-1\)/,
     'a filled surface is what made it read as a foreign object');
