@@ -28,6 +28,8 @@ import bridgeCore from './core/bridge.cjs';
 import migrationCore from './core/migration-plan.cjs';
 import manifestCore from './core/manifest.cjs';
 
+import { createSessionSearchCache, searchSessionPage } from './host/session-search.js';
+
 const { skillRootsForProject, instructionCandidatesForProject } = skillRootsCore;
 const { buildContextPlan } = contextPlanCore;
 const { parseSkillMetadata } = frontmatterCore;
@@ -335,14 +337,32 @@ async function migrateSessionWith(ctx, sessionId, targetWorkspaceId) {
 }
 
 function createRpcHandler(ctx, dshHome) {
+  const searchCache = createSessionSearchCache();
   const readManifestFromDisk = async () => {
     const loaded = await loadManifest(dshHome);
     return loaded;
   };
 
-  return async (endpoint, payload) => {
+  return async (endpoint, payload, signal) => {
     try {
       switch (endpoint) {
+        case 'searchSessions': {
+          const loaded = await readManifestFromDisk();
+          if (!loaded.ok) throw new Error(loaded.error ?? 'Could not read Loom projects');
+          const projects = loaded.manifest.projects;
+          const ids = new Set(projects.flatMap(project => project.members.map(member => member.workspaceId)));
+          const value = await searchSessionPage({
+            queryService: ctx.get('sessionQuery'),
+            persistence: ctx.get('sessionPersistence'),
+            sessions: ctx.get('sessions'),
+            cache: searchCache,
+            projects,
+            paths: await resolvePaths(ctx, ids),
+            archivedIds: ctx.get('workspaceRegistry')?.archivedSessionIds ?? [],
+            signal,
+          }, payload);
+          return { ok: true, value };
+        }
         case 'getManifest': {
           const loaded = await readManifestFromDisk();
           return {

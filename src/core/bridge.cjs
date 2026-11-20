@@ -53,6 +53,7 @@ const BRIDGE_NAMESPACE = 'dsh-loom';
  */
 const BRIDGE_ENDPOINTS = Object.freeze([
   'getManifest', 'putManifest', 'preflight', 'report', 'planMigration', 'migrateSession',
+  'searchSessions',
 ]);
 
 /**

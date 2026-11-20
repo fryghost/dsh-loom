@@ -114,13 +114,14 @@ function loadDom() {
   globalThis.HTMLElement = window.HTMLElement;
   globalThis.Element = window.Element;
   globalThis.Node = window.Node;
-  const React = req('react');
+  const rendererRequire = createRequire(req.resolve('react-dom/client'));
+  const React = rendererRequire('react');
   dom = {
     window,
     React,
     ReactDOM: req('react-dom/client'),
     act: React.act,
-    useSyncExternalStoreWithSelector: req('use-sync-external-store/shim/with-selector').useSyncExternalStoreWithSelector,
+    useSyncExternalStoreWithSelector: rendererRequire('use-sync-external-store/shim/with-selector').useSyncExternalStoreWithSelector,
   };
   return dom;
 }
@@ -173,20 +174,25 @@ function loadBundle(React) {
     throw new Error(`unexpected require: ${spec}`);
   };
   let registration;
-  const sandbox = { window: { __ModuleLoader__: { load: r => { registration = r; } } }, require: fakeRequire, console };
+  const sandbox = {
+    window: { __ModuleLoader__: { load: r => { registration = r; } } }, require: fakeRequire, console,
+    document, AbortController, setTimeout, clearTimeout, Event: window.Event, CSS: window.CSS,
+    requestAnimationFrame: window.requestAnimationFrame.bind(window),
+    cancelAnimationFrame: window.cancelAnimationFrame.bind(window),
+  };
   vm.createContext(sandbox);
   vm.runInContext(source, sandbox, { filename: 'client.js' });
   return registration.factory(fakeRequire);
 }
 
 /** The component `apply()` registers into `sidebar.workspaces`. */
-function registeredComponent(loom) {
+function registeredComponent(loom, get = () => undefined) {
   let captured;
   const ctx = {
     effect: () => () => {},
     locale: { register: () => () => {}, getLocale: () => ({ active: 'zh' }) },
     connection: { rpc: { call: async () => ({ ok: true, value: { manifest: { projects: [] } } }) } },
-    get: () => undefined,
+    get,
     slots: {
       spec: () => ({ kind: 'single', scope: 'root' }),
       declarationEpoch: () => 1,
@@ -209,6 +215,120 @@ const SESSIONS = {
   },
   phase: 'ready',
 };
+
+test('retries an unread session list without showing it as empty', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  const { React, ReactDOM, act } = loadDom();
+  const catalog = observable({ ids: [], byId: {}, phase: 'pending' });
+  const sessions = { refresh: async () => catalog.set(SESSIONS) };
+  const Component = registeredComponent(loadBundle(React), key => key === 'sessions' ? sessions : undefined);
+  const container = document.createElement('div');
+  const root = ReactDOM.createRoot(container);
+  t.after(() => act(() => root.unmount()));
+  await act(async () => {
+    root.render(React.createElement(Component, {
+      useWorkspaces: select => select(SNAPSHOT),
+      useSessions: select => select(React.useSyncExternalStore(catalog.subscribe, catalog.getSnapshot)),
+    }));
+  });
+  assert.match(container.textContent, /正在读取会话/);
+  assert.doesNotMatch(container.textContent, /还没有会话/);
+  const retry = [...container.querySelectorAll('button')].find(button => button.textContent === '重试读取会话');
+  await act(async () => retry.click());
+  assert.match(container.textContent, /新会话/);
+  assert.doesNotMatch(container.textContent, /正在读取会话/);
+});
+
+test('advanced search opens in the main area and returns from an old message to its results', async t => {
+  if (!ready) return t.skip('react / react-dom / happy-dom / DSH checkout unavailable');
+  const { React, ReactDOM, act } = loadDom();
+  const loom = loadBundle(React);
+  const slots = new Map();
+  const container = document.createElement('div');
+  document.body.appendChild(container);
+  const root = ReactDOM.createRoot(container);
+  t.after(() => { act(() => root.unmount()); container.remove(); });
+  const requests = [];
+  let loadedSeq;
+  let destination;
+  let scrolled = false;
+  const hit = { seq: 42, loadFrom: 42, time: 100, author: 'mine',
+    excerpt: { before: '请检查', match: '配置', after: '是否生效' } };
+  const services = {
+    layout: { selectPanel: id => { destination = id; render(); } },
+    uiWorkspace: { openSession: id => { destination = id; render(); } },
+    sessions: { using: async (_id, _options, callback) => callback({
+      ready: Promise.resolve({ session: { loadThrough: async seq => { loadedSeq = seq; render(); } } }),
+    }) },
+  };
+  loom.apply({
+    effect: () => () => {},
+    locale: { register: () => () => {}, getLocale: () => ({ active: 'zh' }) },
+    get: key => services[key],
+    connection: { rpc: { call: async (_channel, endpoint, request) => {
+      if (endpoint.endsWith('/getManifest')) return { ok: true, value: { manifest: { projects: [] } } };
+      if (!endpoint.endsWith('/searchSessions')) return { ok: true };
+      requests.push(request);
+      return { ok: true, value: { skipped: 0, next: null, items: [{
+        id: 'old', title: '旧会话', projects: [], time: 100, matches: [hit], matchCount: 1,
+      }] } };
+    } } },
+    slots: {
+      spec: () => ({}),
+      inject: (_name, contribute) => contribute(),
+      register: (options, component) => { slots.set(options.name, component); return () => {}; },
+    },
+  });
+  function render() {
+    const Sidebar = slots.get('sidebar.workspaces');
+    const Landing = slots.get('conversation.session.header.utilities');
+    const conversation = React.createElement(React.Fragment, null,
+      React.createElement(Landing, { sessionId: 'old', useConversation: select => select({
+        views: { get: () => loadedSeq === undefined ? undefined : { nodes: {
+          values: () => [{ kind: 'user', key: 'original-message', data: { seq: 42 } }],
+        } } },
+      }) }),
+      loadedSeq !== undefined && React.createElement('div', {
+        'data-chat-node-key': 'original-message',
+        ref: node => {
+          if (!node) return;
+          node.getClientRects = () => [{}];
+          node.scrollIntoView = () => { scrolled = true; };
+        },
+      }, '请检查配置是否生效'),
+    );
+    root.render(React.createElement(React.Fragment, null,
+      React.createElement(Sidebar, { useWorkspaces: select => select(SNAPSHOT), useSessions: select => select(SESSIONS) }),
+      destination === 'loom-session-search' ? React.createElement(slots.get('main'))
+        : destination === 'old' ? conversation : null,
+    ));
+  }
+  await act(async () => { render(); });
+  const sidebarInput = container.querySelector('.loom-search-input');
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set.call(sidebarInput, '配置');
+    sidebarInput.dispatchEvent(new window.Event('input', { bubbles: true }));
+  });
+  await act(async () => container.querySelector('.loom-search > [aria-label="高级搜索"]').click());
+  assert.equal(destination, 'loom-session-search');
+  assert.equal(container.querySelector('.loom-advanced-query input').value, '配置');
+  await act(async () => [...container.querySelectorAll('.loom-advanced-scopes button')]
+    .find(button => button.textContent === '我的消息').click());
+  assert.equal(requests.at(-1)?.scope, 'mine');
+  assert.equal(requests.at(-1)?.text, '配置');
+  assert.equal(container.querySelector('.loom-advanced-hit mark').textContent, '配置');
+  container.querySelector('.loom-advanced').scrollTop = 160;
+  await act(async () => container.querySelector('.loom-advanced-hit').click());
+  await new Promise(resolve => setTimeout(resolve, 40));
+  assert.equal(destination, 'old');
+  assert.equal(loadedSeq, 42);
+  assert.equal(scrolled, true);
+  await act(async () => [...container.querySelectorAll('button')]
+    .find(button => button.textContent === '返回搜索结果').click());
+  assert.equal(container.querySelector('.loom-advanced-query input').value, '配置');
+  assert.equal(container.querySelector('.loom-advanced').scrollTop, 160);
+  assert.equal(requests.length, 2);
+});
 
 /** A listener-based observable, the shape the host hands to slot components. */
 function observable(initial) {

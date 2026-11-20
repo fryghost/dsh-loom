@@ -33,7 +33,7 @@ const React = require('react');
 const {
   Button, Tag, StateDot, Modal, Input, Menu,
   IconPlusOutlineRegular, IconChevronDownOutlineRegular,
-  IconSearchOutlineRegular, IconCloseOutlineRegular,
+  IconSearchOutlineRegular, IconCloseOutlineRegular, IconSlidersTwoOutlineRegular,
   IconEllipsisOutlineRegular, IconEditOutlineRegular, IconTrashOutlineRegular,
   IconBranchOutlineRegular, IconArchiveOutlineRegular, IconListPenOutlineRegular,
   IconShareOutlineRegular,
@@ -51,6 +51,7 @@ const NS = 'dsh-loom';
 // section, which is precisely how the 0.2 change presented itself.
 const { BRIDGE_CHANNEL, bridgeEndpoint } = require('./core/bridge.cjs');
 const { deriveSections } = require('./core/sections.cjs');
+const { createSearchPanel, PANEL_ID } = require('./core/search-panel.cjs');
 // The editor rebuilds a member list through the SAME core rule the host uses to
 // read it back, so "editing membership" cannot quietly rewrite roles or prune a
 // folder the registry cannot currently resolve. Duplicating that logic here is
@@ -66,6 +67,9 @@ const dictionaries = {
     addFolder: '添加文件夹',
     removeFolder: '移出',
     noProjects: '还没有项目',
+    sessionsLoading: '正在读取会话…',
+    sessionsUnavailable: '会话列表暂未加载',
+    retrySessions: '重试读取会话',
     noFolders: '这个项目还没有文件夹',
     save: '保存',
     cancel: '取消',
@@ -114,6 +118,29 @@ const dictionaries = {
     sectionChats: '聊天',
     newChat: '新对话',
     searchPlaceholder: '搜索会话',
+    advancedSearch: '高级搜索',
+    searchBack: '返回搜索结果',
+    searchKeyword: '输入会话标题或消息关键词',
+    searchSubmit: '搜索',
+    searchScope: '搜索范围',
+    searchScope_all: '全部',
+    searchScope_mine: '我的消息',
+    searchScope_assistant: 'AI 回复',
+    searchScope_title: '标题',
+    searchProjects: '项目范围',
+    searchAllProjects: '所有项目',
+    searchCurrentProject: '当前项目',
+    searchUntitled: '未命名会话',
+    searchAuthor_mine: '你',
+    searchAuthor_assistant: 'AI',
+    searchExpand: '展开 {count} 条命中',
+    searchCollapse: '收起',
+    searchPreviewLimit: '显示前 {count} 条命中',
+    searchLoading: '正在搜索历史会话…',
+    searchFailed: '搜索失败。',
+    searchSkipped: '有 {count} 个会话无法读取。',
+    searchMore: '继续搜索',
+    searchJumpFailed: '未能定位到消息',
     clearSearch: '清除搜索',
     showMore: '展开其余 {count} 个会话',
     showLess: '收起',
@@ -191,6 +218,9 @@ const dictionaries = {
     addFolder: 'Add folder',
     removeFolder: 'Remove',
     noProjects: 'No projects yet',
+    sessionsLoading: 'Loading conversations…',
+    sessionsUnavailable: 'Conversations haven’t loaded',
+    retrySessions: 'Retry loading conversations',
     noFolders: 'This project has no folders yet',
     save: 'Save',
     cancel: 'Cancel',
@@ -239,6 +269,29 @@ const dictionaries = {
     sectionChats: 'Chats',
     newChat: 'New chat',
     searchPlaceholder: 'Search sessions',
+    advancedSearch: 'Advanced search',
+    searchBack: 'Back to search results',
+    searchKeyword: 'Search titles or messages',
+    searchSubmit: 'Search',
+    searchScope: 'Search scope',
+    searchScope_all: 'All',
+    searchScope_mine: 'My messages',
+    searchScope_assistant: 'AI replies',
+    searchScope_title: 'Titles',
+    searchProjects: 'Project scope',
+    searchAllProjects: 'All projects',
+    searchCurrentProject: 'Current project',
+    searchUntitled: 'Untitled session',
+    searchAuthor_mine: 'You',
+    searchAuthor_assistant: 'AI',
+    searchExpand: 'Show {count} matches',
+    searchCollapse: 'Show less',
+    searchPreviewLimit: 'Showing the first {count} matches',
+    searchLoading: 'Searching session history…',
+    searchFailed: 'Search failed.',
+    searchSkipped: '{count} sessions could not be read.',
+    searchMore: 'Continue searching',
+    searchJumpFailed: 'Could not locate the message',
     clearSearch: 'Clear search',
     showMore: 'Show {count} more',
     showLess: 'Show less',
@@ -543,14 +596,59 @@ const STYLES = `
   color: var(--dsw-alias-label-primary);
 }
 .loom-search-input::placeholder { color: var(--dsw-alias-label-tertiary); }
-.loom-search-clear {
+.loom-search-clear, .loom-search-entry {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; padding: 0;
   border: none; border-radius: var(--dsw-radius-sm);
   background: transparent; cursor: pointer;
   color: var(--dsw-alias-label-secondary);
 }
-.loom-search-clear:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-search-clear:hover,
+.loom-search-entry:not(:disabled):hover { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-search-entry { width: 24px; height: 24px; }
+.loom-search-entry:disabled { opacity: .55; cursor: default; }
+.loom-advanced { height: 100%; overflow: auto; color: var(--dsw-alias-label-primary); }
+.loom-advanced-inner {
+  width: min(100%, 820px); margin: auto; padding: clamp(18px, 4vw, 44px); box-sizing: border-box;
+  padding-top: calc(clamp(18px, 4vw, 44px) + var(--dsh-frame-top-clearance, 0px));
+}
+.loom-advanced-header, .loom-advanced-query, .loom-advanced-filters {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.loom-advanced-header { margin-bottom: 24px; }
+.loom-advanced-header h1 { margin: 0; font-size: 25px; font-weight: 650; }
+.loom-advanced-query input, .loom-advanced-filters select, .loom-advanced-button {
+  background: var(--dsw-alias-bg-base); color: inherit;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: 8px; padding: 8px 12px; font: inherit;
+}
+.loom-advanced-query input { flex: 1; min-width: 0; padding: 11px 14px; }
+.loom-advanced-button { cursor: pointer; }
+.loom-advanced-button:disabled { opacity: .5; cursor: default; }
+.loom-advanced-submit { color: var(--dsw-alias-state-business-primary); }
+.loom-advanced-filters { flex-wrap: wrap; margin: 14px 0 24px; }
+.loom-advanced-scopes { display: flex; flex-wrap: wrap; gap: 4px; }
+.loom-advanced-scopes button, .loom-advanced-title, .loom-advanced-more, .loom-advanced-hit {
+  background: transparent; border: 0; color: inherit; font: inherit; cursor: pointer;
+}
+.loom-advanced-scopes button { padding: 6px 9px; border-radius: 6px; }
+.loom-advanced-scopes [aria-pressed="true"] {
+  background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-state-business-primary);
+}
+.loom-advanced-results article { padding: 16px 0; border-top: 1px solid var(--dsw-alias-border-l3); }
+.loom-advanced-title { padding: 0; font-weight: 650; text-align: start; overflow-wrap: anywhere; }
+.loom-advanced-meta { color: var(--dsw-alias-label-secondary); font-size: 12px; margin-top: 4px; }
+.loom-advanced-hit {
+  display: grid; grid-template-columns: 2.5em minmax(0, 1fr); gap: 8px; font-size: 13px;
+  width: 100%; text-align: start; border-radius: 8px; padding: 9px 10px; margin-top: 7px; line-height: 1.55;
+}
+.loom-advanced-hit:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-advanced-hit span:first-child { color: var(--dsw-alias-label-secondary); }
+.loom-advanced-hit span:last-child { white-space: pre-wrap; overflow-wrap: anywhere; }
+.loom-advanced-more { padding: 6px 10px; font-size: 12px; color: var(--dsw-alias-state-business-primary); }
+.loom-advanced mark {
+  color: inherit; background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 25%, transparent);
+  border-radius: 3px; padding: 0 1px;
+}
 
 /* The three rulers of this tree, all measured from the sidebar's own edge:
      the section twisty   sits at 4 + 2             =  6px
@@ -789,8 +887,8 @@ function interpolate(template, values) {
 
 /** Thin wrapper over the host bridge; every call is host-backed. */
 function createBridge(ctx) {
-  const call = async (endpoint, payload) => {
-    const result = await ctx.connection.rpc.call(BRIDGE_CHANNEL, bridgeEndpoint(endpoint), payload ?? {});
+  const call = async (endpoint, payload, ...options) => {
+    const result = await ctx.connection.rpc.call(BRIDGE_CHANNEL, bridgeEndpoint(endpoint), payload ?? {}, ...options);
     if (result === undefined || result === null) {
       throw new Error(`dsh-loom: empty response from ${endpoint}`);
     }
@@ -805,6 +903,7 @@ function createBridge(ctx) {
     preflight: (projectId, activeWorkspaceId) => call('preflight', { projectId, activeWorkspaceId }),
     planMigration: (sessionId, targetWorkspaceId) => call('planMigration', { sessionId, targetWorkspaceId }),
     migrateSession: (sessionId, targetWorkspaceId) => call('migrateSession', { sessionId, targetWorkspaceId }),
+    searchSessions: (request, signal) => call('searchSessions', request, signal),
     report: event => call('report', event),
   };
 }
@@ -1135,7 +1234,7 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
 const name = 'dsh-loom';
 // `sessions` and `uiWorkspace` are hard dependencies: the browser's whole point
 // is navigating to a session, and the navigation face is what clears the panel.
-const inject = ['slots', 'locale', 'workspaces', 'sessions', 'uiWorkspace', 'connection'];
+const inject = ['slots', 'locale', 'workspaces', 'sessions', 'uiWorkspace', 'connection', 'layout'];
 
 /** Compact age for a session row, in the panel's own copy. */
 function sessionTime(summary, t) {
@@ -1402,11 +1501,12 @@ function PanelSeatProbe({ usePanelInfo, onChange }) {
 
 function LoomSidebar({
   projects, snapshot, sessionState, panelActive, t,
+  manifestReady = true,
   onOpenSession, onStartSession, onNewProject, onEditProject, onDeleteProject,
   onPreflightProject,
   onRenameSession, onForkSession, onArchiveSession, onMigrateSession,
   onNewWorkspace, onRenameWorkspace, onDeleteWorkspace,
-  chatsCwd, onNewChat, onSetChatsCwd,
+  chatsCwd, onNewChat, onSetChatsCwd, onAdvancedSearch, searchEntryLabel,
 }) {
   const [query, setQuery] = React.useState('');
   const [collapsed, setCollapsed] = React.useState(() => new Set());
@@ -1539,6 +1639,15 @@ function LoomSidebar({
         'aria-label': t('clearSearch'),
         onClick: () => setQuery(''),
       }, h(IconCloseOutlineRegular, { size: 12 })),
+      onAdvancedSearch && h('button', {
+        type: 'button',
+        className: 'loom-search-entry',
+        disabled: !manifestReady,
+        title: searchEntryLabel,
+        'aria-label': searchEntryLabel,
+        onClick: () => onAdvancedSearch(query, derived.projectRows.filter(row =>
+          row.sessions.some(session => session.id === derived.current)).map(row => row.project.id)),
+      }, h(IconSlidersTwoOutlineRegular ?? IconSearchOutlineRegular, { size: 14 })),
     ),
 
     nothing && h('div', { className: 'loom-empty-section' }, t('noMatches')),
@@ -1912,11 +2021,33 @@ function MigrateModal({ sessionId, sessionTitle, snapshot, bridge, t, onClose, o
  * The manifest is read over the same loopback channel as the panel, so the two
  * surfaces can never disagree about which projects exist.
  */
-function LoomSidebarHost({ bridge, ctx }) {
+function LoomSidebarHost({ bridge, ctx, search }) {
   /** Mounted only once both seats are known to exist, so its hooks are unconditional. */
   function LoomSidebarSeated({ useWorkspaces, useSessions, usePanelInfo, bridge, ctx, t }) {
     const snapshot = useWorkspaces(state => state);
     const sessionState = useSessions(state => state);
+    const sessionsPending = sessionState?.phase === 'pending';
+    const [sessionsSlow, setSessionsSlow] = React.useState(false);
+    const refreshSessions = React.useCallback(async () => {
+      const sessions = ctx.get('sessions');
+      try {
+        await sessions?.refresh?.();
+      } catch {
+        // The Session service owns the error and can retry the request.
+      }
+    }, [ctx]);
+    React.useEffect(() => {
+      if (!sessionsPending) {
+        setSessionsSlow(false);
+        return;
+      }
+      const retry = setTimeout(() => { void refreshSessions(); }, 3000);
+      const slow = setTimeout(() => setSessionsSlow(true), 8000);
+      return () => { clearTimeout(retry); clearTimeout(slow); };
+    }, [sessionsPending, refreshSessions]);
+    React.useEffect(() => {
+      report(bridge, { event: 'sessions-catalog', phase: sessionState?.phase, count: sessionState?.ids?.length ?? 0 });
+    }, [bridge, sessionsPending]);
     // Whether a main panel is selected — read through a CHILD component, so the
     // seat's own hooks belong to that child rather than to this one. See
     // `PanelSeatProbe`: calling the seat here would change THIS component's hook
@@ -2126,12 +2257,19 @@ function LoomSidebarHost({ bridge, ctx }) {
         && h(PanelSeatProbe, { usePanelInfo, onChange: setPanelActive }),
       error.length > 0 && h('div', { className: 'loom-empty-section loom-warn' }, error),
       notice.length > 0 && h('div', { className: 'loom-empty-section loom-muted' }, notice),
-      h(LoomSidebar, {
+      sessionsPending && !sessionState?.ids?.length
+        ? h('div', { className: 'loom-empty-section' },
+            h('div', { role: 'status' }, t(sessionsSlow ? 'sessionsUnavailable' : 'sessionsLoading')),
+            h('button', { type: 'button', className: 'loom-more', onClick: refreshSessions }, t('retrySessions')))
+        : h(LoomSidebar, {
         projects,
+        manifestReady: manifest !== undefined,
         snapshot,
         sessionState,
         panelActive,
         t,
+        onAdvancedSearch: search && ((query, currentProjects) => search.open(query, projects, currentProjects)),
+        searchEntryLabel: t('advancedSearch'),
         // Open through the navigation face, NOT `ctx.sessions.open` directly.
         //
         // `uiWorkspace.openSession` is what also clears the selected main panel
@@ -2372,23 +2510,21 @@ function LoomSidebarHost({ bridge, ctx }) {
 }
 
 /**
- * Loom contributes exactly ONE surface: the sidebar browser.
+ * Loom contributes a sidebar browser and a dedicated session search page.
  *
  * It claims `sidebar.workspaces` at priority -100, which shadows the shipped
  * browser. That is intended — 项目 / 工作区 / 聊天 CONTAIN the native workspace
  * grouping, so nothing is taken away, unlike an earlier attempt that replaced
  * the browser with a projects-only list.
  *
- * It registers NOTHING in `main` or `sidebar.panellist`: the project list is
- * already covered by the sidebar's 项目 section, so a panel would duplicate it
- * while costing a permanent row in the shell's global navigation. The preflight
- * is a per-project dialog opened from that project's row menu.
+ * Search lives in the main area and is opened from the sidebar browser.
  */
 function apply(ctx) {
   ctx.effect(installStyles, 'dsh-loom: styles');
   ctx.effect(() => ctx.locale.register(NS, dictionaries), 'dsh-loom: dictionaries');
 
   const bridge = createBridge(ctx);
+  const search = createSearchPanel({ bridge, ctx, translate: localTranslate(ctx) });
 
   /**
    * One line saying whether the client half can do its job at all.
@@ -2420,17 +2556,11 @@ function apply(ctx) {
     workspacesSpec: probe(() => ctx.slots.spec('sidebar.workspaces') !== undefined),
   });
 
-  // Nothing is registered in `main` or `sidebar.panellist`, deliberately.
-  //
-  // Both were removed together with the panel they served. The project list was
-  // already covered by the sidebar's 项目 section, so the panel only duplicated
-  // it — and the panellist entry cost a permanent row in the shell's GLOBAL
-  // navigation, pushing the session browser down for every session, including
-  // the ones that have nothing to do with a project.
-  //
-  // The one thing that panel could do and the sidebar cannot is the context
-  // preflight, and that is a per-project action rather than a destination. It
-  // now opens from the project row's own menu, beside its other verbs.
+  ctx.slots.inject('main', contribute(ctx, bridge, 'main',
+    { name: 'main', key: PANEL_ID, locale: NS }, search.SearchPanel));
+  const landingSlot = 'conversation.session.header.utilities';
+  ctx.slots.inject(landingSlot, contribute(ctx, bridge, landingSlot,
+    { name: landingSlot, id: PANEL_ID, locale: NS }, search.SearchLanding));
 
   // The sidebar browser: 项目 / 工作区 / 聊天, each with its own conversations.
   //
@@ -2440,7 +2570,7 @@ function apply(ctx) {
   try {
     ctx.slots.inject('sidebar.workspaces', contribute(ctx, bridge, 'sidebar.workspaces',
       { name: 'sidebar.workspaces', priority: -100, locale: NS },
-      LoomSidebarHost({ bridge, ctx })));
+      LoomSidebarHost({ bridge, ctx, search })));
     report(bridge, { event: 'inject', slot: 'sidebar.workspaces', ok: true });
   } catch (error) {
     report(bridge, {

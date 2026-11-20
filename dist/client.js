@@ -15,7 +15,8 @@ var require_bridge = __commonJS({
       "preflight",
       "report",
       "planMigration",
-      "migrateSession"
+      "migrateSession",
+      "searchSessions"
     ]);
     function bridgePath(endpoint) {
       return `${BRIDGE_CHANNEL2}/${BRIDGE_NAMESPACE}/${endpoint}`;
@@ -114,6 +115,338 @@ var require_sections = __commonJS({
       return { projectRows, workspaceRows, chatSessions, current, highlighted };
     }
     module2.exports = { currentSessionId, deriveSections: deriveSections2, sessionVisible };
+  }
+});
+
+// src/core/search-panel.cjs
+var require_search_panel = __commonJS({
+  "src/core/search-panel.cjs"(exports2, module2) {
+    var React2 = require("react");
+    var h2 = React2.createElement;
+    var PANEL_ID2 = "loom-session-search";
+    var SCOPES = ["all", "mine", "assistant", "title"];
+    function marked(excerpt) {
+      return [excerpt.before, h2("mark", { key: "match" }, excerpt.match), excerpt.after];
+    }
+    function createSearchPanel2({ bridge, ctx, translate }) {
+      const emptyResults = { results: [], next: null, skipped: 0, searched: false, scrollTop: 0, expanded: [] };
+      let page = {
+        text: "",
+        scope: "all",
+        projectId: "",
+        projects: [],
+        currentProjects: [],
+        ...emptyResults
+      };
+      let landing = null;
+      let entry = 0;
+      const listeners = /* @__PURE__ */ new Set();
+      const subscribe = (listener) => {
+        listeners.add(listener);
+        return () => listeners.delete(listener);
+      };
+      const select = () => ctx.get("layout").selectPanel(PANEL_ID2);
+      function open(text, projects, currentProjects) {
+        const keyword = text.trim() || page.text;
+        const projectId = projects.some((project) => project.id === page.projectId) ? page.projectId : "";
+        const changed = projectId !== page.projectId || keyword !== page.text;
+        landing = null;
+        page = { ...page, ...changed ? emptyResults : {}, text: keyword, projectId, projects, currentProjects };
+        entry++;
+        for (const listener of listeners) listener();
+        select();
+      }
+      function SearchPanel(props) {
+        const key = React2.useSyncExternalStore(subscribe, () => entry);
+        return h2(SearchPage, { ...props, key });
+      }
+      function SearchPage({ t = translate } = {}) {
+        const [text, setText] = React2.useState(page.text);
+        const [scope, setScope] = React2.useState(page.scope);
+        const [projectId, setProjectId] = React2.useState(page.projectId);
+        const [view, setView] = React2.useState(page);
+        const [pending, setPending] = React2.useState(false);
+        const [error, setError] = React2.useState("");
+        const [expanded, setExpanded] = React2.useState(() => new Set(page.expanded));
+        const scroll = React2.useRef(null);
+        const inFlight = React2.useRef(null);
+        const query = text.trim();
+        async function run(filters, append = false) {
+          inFlight.current?.abort();
+          const controller = new AbortController();
+          inFlight.current = controller;
+          setPending(true);
+          setError("");
+          try {
+            let items = append ? page.results : [];
+            let next = append ? page.next : null;
+            let skipped = append ? page.skipped : 0;
+            const startingCount = items.length;
+            do {
+              const batch = await bridge.searchSessions({ ...filters, projectId: filters.projectId || null, after: next }, controller.signal);
+              if (controller.signal.aborted) return;
+              items = [...items, ...batch.items];
+              next = batch.next;
+              skipped += batch.skipped;
+              page = { ...page, ...filters, results: items, next, skipped, searched: true };
+              setView(page);
+            } while (next && items.length - startingCount < 12);
+          } catch (reason) {
+            if (!controller.signal.aborted) setError(String(reason.message ?? reason));
+          } finally {
+            if (!controller.signal.aborted) setPending(false);
+          }
+        }
+        React2.useLayoutEffect(() => {
+          if (scroll.current) scroll.current.scrollTop = page.scrollTop;
+        }, []);
+        React2.useEffect(() => {
+          if (query && !page.searched) void run({ text: query, scope, projectId });
+          return () => inFlight.current?.abort();
+        }, []);
+        function changeFilters(filters) {
+          page = { ...page, ...filters, ...emptyResults };
+          setView(page);
+          setExpanded(/* @__PURE__ */ new Set());
+          setError("");
+          inFlight.current?.abort();
+          setPending(false);
+          if (scroll.current) scroll.current.scrollTop = 0;
+        }
+        function updateScope(value) {
+          setScope(value);
+          const filters = { text: query, scope: value, projectId };
+          changeFilters(filters);
+          if (query) void run(filters);
+        }
+        function updateProject(value) {
+          setProjectId(value);
+          const filters = { text: query, scope, projectId: value };
+          changeFilters(filters);
+          if (query) void run(filters);
+        }
+        function openHit(item, hit) {
+          page = { ...page, scrollTop: scroll.current?.scrollTop ?? 0, expanded: [...expanded] };
+          landing = { id: item.id, hit };
+          ctx.get("uiWorkspace").openSession(item.id);
+        }
+        return h2(
+          "section",
+          { className: "loom-advanced", ref: scroll, "aria-label": t("advancedSearch") },
+          h2(
+            "div",
+            { className: "loom-advanced-inner" },
+            h2(
+              "header",
+              { className: "loom-advanced-header" },
+              h2("h1", null, t("advancedSearch")),
+              h2("button", {
+                type: "button",
+                className: "loom-advanced-button",
+                onClick: () => ctx.get("layout").selectPanel(null)
+              }, t("close"))
+            ),
+            h2(
+              "form",
+              { role: "search", onSubmit: (event) => {
+                event.preventDefault();
+                if (!query) return;
+                const filters = { text: query, scope, projectId };
+                changeFilters(filters);
+                void run(filters);
+              } },
+              h2(
+                "div",
+                { className: "loom-advanced-query" },
+                h2("input", {
+                  type: "search",
+                  autoFocus: !view.searched,
+                  maxLength: 256,
+                  value: text,
+                  "aria-label": t("searchKeyword"),
+                  placeholder: t("searchKeyword"),
+                  onChange: (event) => {
+                    setText(event.target.value);
+                    changeFilters({ text: event.target.value });
+                  }
+                }),
+                h2("button", {
+                  type: "submit",
+                  className: "loom-advanced-button loom-advanced-submit",
+                  disabled: !query || pending
+                }, t("searchSubmit"))
+              ),
+              h2(
+                "div",
+                { className: "loom-advanced-filters" },
+                h2(
+                  "div",
+                  { className: "loom-advanced-scopes", role: "group", "aria-label": t("searchScope") },
+                  SCOPES.map((value) => h2("button", {
+                    type: "button",
+                    key: value,
+                    "aria-pressed": scope === value,
+                    onClick: () => {
+                      if (scope !== value) updateScope(value);
+                    }
+                  }, t(`searchScope_${value}`)))
+                ),
+                h2(
+                  "select",
+                  {
+                    value: projectId,
+                    "aria-label": t("searchProjects"),
+                    onChange: (event) => updateProject(event.target.value)
+                  },
+                  h2("option", { value: "" }, t("searchAllProjects")),
+                  view.projects.map((project) => h2(
+                    "option",
+                    { key: project.id, value: project.id },
+                    view.currentProjects.includes(project.id) ? `${project.title} \xB7 ${t("searchCurrentProject")}` : project.title
+                  ))
+                )
+              )
+            ),
+            h2(
+              "div",
+              { className: "loom-advanced-results", "aria-busy": pending },
+              view.results.map((item) => h2(
+                "article",
+                { key: item.id },
+                h2(
+                  "button",
+                  { type: "button", className: "loom-advanced-title", onClick: () => openHit(item) },
+                  item.titleExcerpt ? marked(item.titleExcerpt) : item.title || t("searchUntitled")
+                ),
+                h2(
+                  "div",
+                  { className: "loom-advanced-meta" },
+                  [...item.projects, new Date(item.time).toLocaleString()].join(" \xB7 ")
+                ),
+                item.matches.slice(0, expanded.has(item.id) ? void 0 : 1).map((hit) => h2(
+                  "button",
+                  { key: hit.seq, type: "button", className: "loom-advanced-hit", onClick: () => openHit(item, hit) },
+                  h2("span", null, t(`searchAuthor_${hit.author}`)),
+                  h2("span", null, marked(hit.excerpt))
+                )),
+                item.matches.length > 1 && h2("button", {
+                  type: "button",
+                  className: "loom-advanced-more",
+                  "aria-expanded": expanded.has(item.id),
+                  onClick: () => setExpanded((current) => {
+                    const next = new Set(current);
+                    if (!next.delete(item.id)) next.add(item.id);
+                    return next;
+                  })
+                }, t(expanded.has(item.id) ? "searchCollapse" : "searchExpand", { count: item.matchCount })),
+                expanded.has(item.id) && item.matchCount > item.matches.length && h2("small", { className: "loom-advanced-meta" }, t("searchPreviewLimit", { count: item.matches.length }))
+              )),
+              pending && h2("p", { role: "status" }, t("searchLoading")),
+              error && h2("p", { role: "alert" }, `${t("searchFailed")} ${error}`),
+              !pending && !error && view.searched && view.results.length === 0 && h2("p", { role: "status" }, t("noMatches")),
+              view.skipped > 0 && h2("p", { role: "status" }, t("searchSkipped", { count: view.skipped })),
+              !pending && view.next && h2("button", {
+                type: "button",
+                className: "loom-advanced-button",
+                onClick: () => void run({ text: query, scope, projectId }, true)
+              }, t("searchMore"))
+            )
+          )
+        );
+      }
+      function SearchLanding({ sessionId, useConversation, t = translate }) {
+        const target = landing?.id === sessionId ? landing : null;
+        const hit = target?.hit;
+        const [failed, setFailed] = React2.useState(false);
+        const key = useConversation?.((snapshot) => {
+          if (!hit) return void 0;
+          const nodes = snapshot.views.get("chat")?.nodes.values() ?? [];
+          return nodes.find((node) => hit.author === "assistant" ? node.kind === "assistant-step" && node.data.finalNode?.seq === hit.seq : (node.kind === "user" || node.kind === "steering") && node.data.seq === hit.seq)?.key;
+        });
+        React2.useEffect(() => {
+          if (!hit) return;
+          setFailed(false);
+          let cancelled = false;
+          const controller = new AbortController();
+          const sessions = ctx.get("sessions");
+          sessions.using(sessionId, { source: "workspaceOperation", signal: controller.signal }, async (reference) => {
+            const binding = await reference.ready;
+            if (!cancelled) await binding.session.loadThrough(hit.loadFrom);
+          }).catch(() => {
+            if (!cancelled) setFailed(true);
+          });
+          const timeout = setTimeout(() => {
+            if (!cancelled && !target.landed) setFailed(true);
+          }, 12e3);
+          return () => {
+            cancelled = true;
+            clearTimeout(timeout);
+            controller.abort();
+          };
+        }, [target, sessionId, hit]);
+        React2.useEffect(() => {
+          if (!key || target.landed) return;
+          let frame;
+          let positioned = false;
+          let visibleFrames = 0;
+          function locate(attempt = 0) {
+            const rows = document.querySelectorAll(`[data-chat-node-key="${CSS.escape(key)}"]`);
+            const row = [...rows].find((element) => element.dataset.chatGroupPart !== "process") ?? rows[0];
+            if (row) {
+              for (let parent = row; parent; parent = parent.parentElement) {
+                if (parent.getAttribute("hidden") === "until-found") parent.dispatchEvent(new Event("beforematch"));
+              }
+              if (row.getClientRects().length && !row.closest("[hidden]")) {
+                let scroller = row.parentElement;
+                while (scroller && (scroller.clientHeight === 0 || scroller.scrollHeight <= scroller.clientHeight || !/^(auto|scroll|overlay)$/.test(document.defaultView.getComputedStyle(scroller).overflowY))) {
+                  scroller = scroller.parentElement;
+                }
+                const viewport = scroller?.getBoundingClientRect();
+                const bounds = row.getBoundingClientRect();
+                const visible = viewport === void 0 || bounds.top < viewport.bottom && bounds.bottom > viewport.top;
+                if (positioned && visible) {
+                  if (++visibleFrames >= 3) {
+                    row.animate?.([{ outline: "2px solid var(--dsw-alias-state-business-primary)" }, { outlineColor: "transparent" }], 1800);
+                    target.landed = true;
+                    setFailed(false);
+                    return;
+                  }
+                } else {
+                  visibleFrames = 0;
+                  row.dispatchEvent(new Event("beforematch", { bubbles: true }));
+                  if (scroller) {
+                    scroller.scrollTop += bounds.top - viewport.top - (viewport.height - bounds.height) / 2;
+                    scroller.dispatchEvent(new Event("scroll"));
+                  } else {
+                    row.scrollIntoView({ block: "center", behavior: "instant" });
+                  }
+                  positioned = true;
+                }
+              }
+            }
+            if (attempt < 120) frame = requestAnimationFrame(() => locate(attempt + 1));
+          }
+          frame = requestAnimationFrame(() => locate());
+          return () => cancelAnimationFrame(frame);
+        }, [key, target]);
+        if (!target) return null;
+        return h2(
+          "button",
+          {
+            type: "button",
+            className: "loom-advanced-button",
+            title: failed ? t("searchJumpFailed") : void 0,
+            onClick: () => {
+              landing = null;
+              select();
+            }
+          },
+          failed ? `${t("searchJumpFailed")} \xB7 ${t("searchBack")}` : t("searchBack")
+        );
+      }
+      return { open, SearchPanel, SearchLanding };
+    }
+    module2.exports = { createSearchPanel: createSearchPanel2, PANEL_ID: PANEL_ID2 };
   }
 });
 
@@ -347,6 +680,7 @@ var {
   IconChevronDownOutlineRegular,
   IconSearchOutlineRegular,
   IconCloseOutlineRegular,
+  IconSlidersTwoOutlineRegular,
   IconEllipsisOutlineRegular,
   IconEditOutlineRegular,
   IconTrashOutlineRegular,
@@ -359,6 +693,7 @@ var h = React.createElement;
 var NS = "dsh-loom";
 var { BRIDGE_CHANNEL, bridgeEndpoint } = require_bridge();
 var { deriveSections } = require_sections();
+var { createSearchPanel, PANEL_ID } = require_search_panel();
 var { mergeMembers, normalizeComparablePath: comparablePath } = require_manifest();
 var dictionaries = {
   zh: {
@@ -369,6 +704,9 @@ var dictionaries = {
     addFolder: "\u6DFB\u52A0\u6587\u4EF6\u5939",
     removeFolder: "\u79FB\u51FA",
     noProjects: "\u8FD8\u6CA1\u6709\u9879\u76EE",
+    sessionsLoading: "\u6B63\u5728\u8BFB\u53D6\u4F1A\u8BDD\u2026",
+    sessionsUnavailable: "\u4F1A\u8BDD\u5217\u8868\u6682\u672A\u52A0\u8F7D",
+    retrySessions: "\u91CD\u8BD5\u8BFB\u53D6\u4F1A\u8BDD",
     noFolders: "\u8FD9\u4E2A\u9879\u76EE\u8FD8\u6CA1\u6709\u6587\u4EF6\u5939",
     save: "\u4FDD\u5B58",
     cancel: "\u53D6\u6D88",
@@ -417,6 +755,29 @@ var dictionaries = {
     sectionChats: "\u804A\u5929",
     newChat: "\u65B0\u5BF9\u8BDD",
     searchPlaceholder: "\u641C\u7D22\u4F1A\u8BDD",
+    advancedSearch: "\u9AD8\u7EA7\u641C\u7D22",
+    searchBack: "\u8FD4\u56DE\u641C\u7D22\u7ED3\u679C",
+    searchKeyword: "\u8F93\u5165\u4F1A\u8BDD\u6807\u9898\u6216\u6D88\u606F\u5173\u952E\u8BCD",
+    searchSubmit: "\u641C\u7D22",
+    searchScope: "\u641C\u7D22\u8303\u56F4",
+    searchScope_all: "\u5168\u90E8",
+    searchScope_mine: "\u6211\u7684\u6D88\u606F",
+    searchScope_assistant: "AI \u56DE\u590D",
+    searchScope_title: "\u6807\u9898",
+    searchProjects: "\u9879\u76EE\u8303\u56F4",
+    searchAllProjects: "\u6240\u6709\u9879\u76EE",
+    searchCurrentProject: "\u5F53\u524D\u9879\u76EE",
+    searchUntitled: "\u672A\u547D\u540D\u4F1A\u8BDD",
+    searchAuthor_mine: "\u4F60",
+    searchAuthor_assistant: "AI",
+    searchExpand: "\u5C55\u5F00 {count} \u6761\u547D\u4E2D",
+    searchCollapse: "\u6536\u8D77",
+    searchPreviewLimit: "\u663E\u793A\u524D {count} \u6761\u547D\u4E2D",
+    searchLoading: "\u6B63\u5728\u641C\u7D22\u5386\u53F2\u4F1A\u8BDD\u2026",
+    searchFailed: "\u641C\u7D22\u5931\u8D25\u3002",
+    searchSkipped: "\u6709 {count} \u4E2A\u4F1A\u8BDD\u65E0\u6CD5\u8BFB\u53D6\u3002",
+    searchMore: "\u7EE7\u7EED\u641C\u7D22",
+    searchJumpFailed: "\u672A\u80FD\u5B9A\u4F4D\u5230\u6D88\u606F",
     clearSearch: "\u6E05\u9664\u641C\u7D22",
     showMore: "\u5C55\u5F00\u5176\u4F59 {count} \u4E2A\u4F1A\u8BDD",
     showLess: "\u6536\u8D77",
@@ -494,6 +855,9 @@ var dictionaries = {
     addFolder: "Add folder",
     removeFolder: "Remove",
     noProjects: "No projects yet",
+    sessionsLoading: "Loading conversations\u2026",
+    sessionsUnavailable: "Conversations haven\u2019t loaded",
+    retrySessions: "Retry loading conversations",
     noFolders: "This project has no folders yet",
     save: "Save",
     cancel: "Cancel",
@@ -542,6 +906,29 @@ var dictionaries = {
     sectionChats: "Chats",
     newChat: "New chat",
     searchPlaceholder: "Search sessions",
+    advancedSearch: "Advanced search",
+    searchBack: "Back to search results",
+    searchKeyword: "Search titles or messages",
+    searchSubmit: "Search",
+    searchScope: "Search scope",
+    searchScope_all: "All",
+    searchScope_mine: "My messages",
+    searchScope_assistant: "AI replies",
+    searchScope_title: "Titles",
+    searchProjects: "Project scope",
+    searchAllProjects: "All projects",
+    searchCurrentProject: "Current project",
+    searchUntitled: "Untitled session",
+    searchAuthor_mine: "You",
+    searchAuthor_assistant: "AI",
+    searchExpand: "Show {count} matches",
+    searchCollapse: "Show less",
+    searchPreviewLimit: "Showing the first {count} matches",
+    searchLoading: "Searching session history\u2026",
+    searchFailed: "Search failed.",
+    searchSkipped: "{count} sessions could not be read.",
+    searchMore: "Continue searching",
+    searchJumpFailed: "Could not locate the message",
     clearSearch: "Clear search",
     showMore: "Show {count} more",
     showLess: "Show less",
@@ -837,14 +1224,59 @@ var STYLES = `
   color: var(--dsw-alias-label-primary);
 }
 .loom-search-input::placeholder { color: var(--dsw-alias-label-tertiary); }
-.loom-search-clear {
+.loom-search-clear, .loom-search-entry {
   flex: none; display: inline-flex; align-items: center; justify-content: center;
   width: 20px; height: 20px; padding: 0;
   border: none; border-radius: var(--dsw-radius-sm);
   background: transparent; cursor: pointer;
   color: var(--dsw-alias-label-secondary);
 }
-.loom-search-clear:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-search-clear:hover,
+.loom-search-entry:not(:disabled):hover { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-search-entry { width: 24px; height: 24px; }
+.loom-search-entry:disabled { opacity: .55; cursor: default; }
+.loom-advanced { height: 100%; overflow: auto; color: var(--dsw-alias-label-primary); }
+.loom-advanced-inner {
+  width: min(100%, 820px); margin: auto; padding: clamp(18px, 4vw, 44px); box-sizing: border-box;
+  padding-top: calc(clamp(18px, 4vw, 44px) + var(--dsh-frame-top-clearance, 0px));
+}
+.loom-advanced-header, .loom-advanced-query, .loom-advanced-filters {
+  display: flex; align-items: center; justify-content: space-between; gap: 12px;
+}
+.loom-advanced-header { margin-bottom: 24px; }
+.loom-advanced-header h1 { margin: 0; font-size: 25px; font-weight: 650; }
+.loom-advanced-query input, .loom-advanced-filters select, .loom-advanced-button {
+  background: var(--dsw-alias-bg-base); color: inherit;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: 8px; padding: 8px 12px; font: inherit;
+}
+.loom-advanced-query input { flex: 1; min-width: 0; padding: 11px 14px; }
+.loom-advanced-button { cursor: pointer; }
+.loom-advanced-button:disabled { opacity: .5; cursor: default; }
+.loom-advanced-submit { color: var(--dsw-alias-state-business-primary); }
+.loom-advanced-filters { flex-wrap: wrap; margin: 14px 0 24px; }
+.loom-advanced-scopes { display: flex; flex-wrap: wrap; gap: 4px; }
+.loom-advanced-scopes button, .loom-advanced-title, .loom-advanced-more, .loom-advanced-hit {
+  background: transparent; border: 0; color: inherit; font: inherit; cursor: pointer;
+}
+.loom-advanced-scopes button { padding: 6px 9px; border-radius: 6px; }
+.loom-advanced-scopes [aria-pressed="true"] {
+  background: var(--dsw-alias-interactive-bg-hover); color: var(--dsw-alias-state-business-primary);
+}
+.loom-advanced-results article { padding: 16px 0; border-top: 1px solid var(--dsw-alias-border-l3); }
+.loom-advanced-title { padding: 0; font-weight: 650; text-align: start; overflow-wrap: anywhere; }
+.loom-advanced-meta { color: var(--dsw-alias-label-secondary); font-size: 12px; margin-top: 4px; }
+.loom-advanced-hit {
+  display: grid; grid-template-columns: 2.5em minmax(0, 1fr); gap: 8px; font-size: 13px;
+  width: 100%; text-align: start; border-radius: 8px; padding: 9px 10px; margin-top: 7px; line-height: 1.55;
+}
+.loom-advanced-hit:hover { background: var(--dsw-alias-interactive-bg-hover); }
+.loom-advanced-hit span:first-child { color: var(--dsw-alias-label-secondary); }
+.loom-advanced-hit span:last-child { white-space: pre-wrap; overflow-wrap: anywhere; }
+.loom-advanced-more { padding: 6px 10px; font-size: 12px; color: var(--dsw-alias-state-business-primary); }
+.loom-advanced mark {
+  color: inherit; background: color-mix(in srgb, var(--dsw-alias-state-business-primary) 25%, transparent);
+  border-radius: 3px; padding: 0 1px;
+}
 
 /* The three rulers of this tree, all measured from the sidebar's own edge:
      the section twisty   sits at 4 + 2             =  6px
@@ -1082,8 +1514,8 @@ function interpolate(template, values) {
   return String(template).replace(/\{(\w+)\}/g, (match, key) => values[key] === void 0 ? match : String(values[key]));
 }
 function createBridge(ctx) {
-  const call = async (endpoint, payload) => {
-    const result = await ctx.connection.rpc.call(BRIDGE_CHANNEL, bridgeEndpoint(endpoint), payload ?? {});
+  const call = async (endpoint, payload, ...options) => {
+    const result = await ctx.connection.rpc.call(BRIDGE_CHANNEL, bridgeEndpoint(endpoint), payload ?? {}, ...options);
     if (result === void 0 || result === null) {
       throw new Error(`dsh-loom: empty response from ${endpoint}`);
     }
@@ -1098,6 +1530,7 @@ function createBridge(ctx) {
     preflight: (projectId, activeWorkspaceId) => call("preflight", { projectId, activeWorkspaceId }),
     planMigration: (sessionId, targetWorkspaceId) => call("planMigration", { sessionId, targetWorkspaceId }),
     migrateSession: (sessionId, targetWorkspaceId) => call("migrateSession", { sessionId, targetWorkspaceId }),
+    searchSessions: (request, signal) => call("searchSessions", request, signal),
     report: (event) => call("report", event)
   };
 }
@@ -1410,7 +1843,7 @@ function ProjectEditor({ project, workspaces, onSave, onClose, t }) {
   );
 }
 var name = "dsh-loom";
-var inject = ["slots", "locale", "workspaces", "sessions", "uiWorkspace", "connection"];
+var inject = ["slots", "locale", "workspaces", "sessions", "uiWorkspace", "connection", "layout"];
 function sessionTime(summary, t) {
   const at = summary?.updatedAt;
   if (typeof at !== "number") return "";
@@ -1631,6 +2064,7 @@ function LoomSidebar({
   sessionState,
   panelActive,
   t,
+  manifestReady = true,
   onOpenSession,
   onStartSession,
   onNewProject,
@@ -1646,7 +2080,9 @@ function LoomSidebar({
   onDeleteWorkspace,
   chatsCwd,
   onNewChat,
-  onSetChatsCwd
+  onSetChatsCwd,
+  onAdvancedSearch,
+  searchEntryLabel
 }) {
   const [query, setQuery] = React.useState("");
   const [collapsed, setCollapsed] = React.useState(() => /* @__PURE__ */ new Set());
@@ -1760,7 +2196,15 @@ function LoomSidebar({
         className: "loom-search-clear",
         "aria-label": t("clearSearch"),
         onClick: () => setQuery("")
-      }, h(IconCloseOutlineRegular, { size: 12 }))
+      }, h(IconCloseOutlineRegular, { size: 12 })),
+      onAdvancedSearch && h("button", {
+        type: "button",
+        className: "loom-search-entry",
+        disabled: !manifestReady,
+        title: searchEntryLabel,
+        "aria-label": searchEntryLabel,
+        onClick: () => onAdvancedSearch(query, derived.projectRows.filter((row) => row.sessions.some((session) => session.id === derived.current)).map((row) => row.project.id))
+      }, h(IconSlidersTwoOutlineRegular ?? IconSearchOutlineRegular, { size: 14 }))
     ),
     nothing && h("div", { className: "loom-empty-section" }, t("noMatches")),
     sectionHead(
@@ -2099,10 +2543,36 @@ function MigrateModal({ sessionId, sessionTitle, snapshot, bridge, t, onClose, o
     )
   );
 }
-function LoomSidebarHost({ bridge, ctx }) {
+function LoomSidebarHost({ bridge, ctx, search }) {
   function LoomSidebarSeated({ useWorkspaces, useSessions, usePanelInfo, bridge: bridge2, ctx: ctx2, t }) {
     const snapshot = useWorkspaces((state) => state);
     const sessionState = useSessions((state) => state);
+    const sessionsPending = sessionState?.phase === "pending";
+    const [sessionsSlow, setSessionsSlow] = React.useState(false);
+    const refreshSessions = React.useCallback(async () => {
+      const sessions = ctx2.get("sessions");
+      try {
+        await sessions?.refresh?.();
+      } catch {
+      }
+    }, [ctx2]);
+    React.useEffect(() => {
+      if (!sessionsPending) {
+        setSessionsSlow(false);
+        return;
+      }
+      const retry = setTimeout(() => {
+        void refreshSessions();
+      }, 3e3);
+      const slow = setTimeout(() => setSessionsSlow(true), 8e3);
+      return () => {
+        clearTimeout(retry);
+        clearTimeout(slow);
+      };
+    }, [sessionsPending, refreshSessions]);
+    React.useEffect(() => {
+      report(bridge2, { event: "sessions-catalog", phase: sessionState?.phase, count: sessionState?.ids?.length ?? 0 });
+    }, [bridge2, sessionsPending]);
     const [panelActive, setPanelActive] = React.useState(false);
     const [manifest, setManifest] = React.useState(void 0);
     const manifestRef = React.useRef(void 0);
@@ -2207,12 +2677,20 @@ function LoomSidebarHost({ bridge, ctx }) {
       usePanelInfo !== void 0 && h(PanelSeatProbe, { usePanelInfo, onChange: setPanelActive }),
       error.length > 0 && h("div", { className: "loom-empty-section loom-warn" }, error),
       notice.length > 0 && h("div", { className: "loom-empty-section loom-muted" }, notice),
-      h(LoomSidebar, {
+      sessionsPending && !sessionState?.ids?.length ? h(
+        "div",
+        { className: "loom-empty-section" },
+        h("div", { role: "status" }, t(sessionsSlow ? "sessionsUnavailable" : "sessionsLoading")),
+        h("button", { type: "button", className: "loom-more", onClick: refreshSessions }, t("retrySessions"))
+      ) : h(LoomSidebar, {
         projects,
+        manifestReady: manifest !== void 0,
         snapshot,
         sessionState,
         panelActive,
         t,
+        onAdvancedSearch: search && ((query, currentProjects) => search.open(query, projects, currentProjects)),
+        searchEntryLabel: t("advancedSearch"),
         // Open through the navigation face, NOT `ctx.sessions.open` directly.
         //
         // `uiWorkspace.openSession` is what also clears the selected main panel
@@ -2436,6 +2914,7 @@ function apply(ctx) {
   ctx.effect(installStyles, "dsh-loom: styles");
   ctx.effect(() => ctx.locale.register(NS, dictionaries), "dsh-loom: dictionaries");
   const bridge = createBridge(ctx);
+  const search = createSearchPanel({ bridge, ctx, translate: localTranslate(ctx) });
   const probe = (read) => {
     try {
       return read();
@@ -2454,13 +2933,28 @@ function apply(ctx) {
     sidebarSpec: probe(() => ctx.slots.spec("sidebar") !== void 0),
     workspacesSpec: probe(() => ctx.slots.spec("sidebar.workspaces") !== void 0)
   });
+  ctx.slots.inject("main", contribute(
+    ctx,
+    bridge,
+    "main",
+    { name: "main", key: PANEL_ID, locale: NS },
+    search.SearchPanel
+  ));
+  const landingSlot = "conversation.session.header.utilities";
+  ctx.slots.inject(landingSlot, contribute(
+    ctx,
+    bridge,
+    landingSlot,
+    { name: landingSlot, id: PANEL_ID, locale: NS },
+    search.SearchLanding
+  ));
   try {
     ctx.slots.inject("sidebar.workspaces", contribute(
       ctx,
       bridge,
       "sidebar.workspaces",
       { name: "sidebar.workspaces", priority: -100, locale: NS },
-      LoomSidebarHost({ bridge, ctx })
+      LoomSidebarHost({ bridge, ctx, search })
     ));
     report(bridge, { event: "inject", slot: "sidebar.workspaces", ok: true });
   } catch (error) {
