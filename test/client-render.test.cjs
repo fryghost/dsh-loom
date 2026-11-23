@@ -23,6 +23,7 @@ const { existsSync, readFileSync, readdirSync } = require('node:fs');
 const { createRequire } = require('node:module');
 const { join, resolve } = require('node:path');
 const vm = require('node:vm');
+const { buildContextPlan } = require('../src/core/context-plan.cjs');
 
 const ROOT = join(__dirname, '..');
 const BUNDLE = join(ROOT, 'dist', 'client.js');
@@ -225,6 +226,36 @@ const SESSIONS = {
 };
 
 const NOOP = () => {};
+
+test('new-session preview names the writable folder and groups empty results by folder', t => {
+  if (!ready) return t.skip('React or DSH primitives build unavailable');
+  const { React, server } = loadReact();
+  const { PreflightPanel } = loadBundle(React);
+  const plan = buildContextPlan({
+    project: { title: 'ai阿宝', members: [{ workspaceId: 'opaque-a' }, { workspaceId: 'opaque-b' }] },
+    pathsByWorkspaceId: { 'opaque-a': 'D:/work/code', 'opaque-b': 'D:/work/tools' },
+    namesByWorkspaceId: { 'opaque-a': '项目代码', 'opaque-b': '公共工具' },
+    activeWorkspaceId: 'opaque-a',
+    sandboxMode: 'workspace-write',
+  });
+  const labels = {
+    projectSkillCount: '项目技能 {count} 个',
+    ruleFileCount: '发现规则文件 {count} 个',
+    writeOneFolder: '仅「{name}」可写',
+    writable: '可写',
+    readonly: '只读',
+    folderDetails: '查看文件夹详情',
+  };
+  const html = server.renderToStaticMarkup(React.createElement(PreflightPanel, {
+    plan, t: key => labels[key] ?? key, onRefresh: NOOP,
+  }));
+  assert.match(html, /仅「项目代码」可写/);
+  assert.match(html, /项目技能 0 个<\/span><span>发现规则文件 0 个/);
+  assert.match(html, /<details[^>]*><summary>查看文件夹详情<\/summary>/);
+  assert.equal((html.match(/<li /g) ?? []).length, 2);
+  assert.match(html, /<strong>公共工具<\/strong>.*?只读/);
+  assert.doesNotMatch(html, /opaque-[ab]|folderProblems|<details[^>]*\bopen=/);
+});
 
 /**
  * Compare only the ids.

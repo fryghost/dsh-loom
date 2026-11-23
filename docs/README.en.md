@@ -29,35 +29,11 @@ Loom is not a copy of it but a different implementation route: **do not change t
 
 ## Three highlights
 
-### Highlight 1: Context Preflight
+### Highlight 1: New session environment
 
-This is the reason Loom exists. The hardest thing about a multi-folder project is not the "merge" — it is that **you cannot see the result of the merge**. So Loom puts the answer on the table before the session starts:
+Open **New session environment** from the project row’s `⋯` menu to see where a session starts, which folders default permissions let it write to, and which project skills and rule files were found. Expand the folder details to see each member’s name, path, write access, and counts.
 
-```
-项目：example-project（3 个文件夹）
-活动文件夹：ws-a
-
-技能（3）
-  · alpha-skill  ← ws-a
-  · beta-skill   ← ws-a
-  · gamma-skill  ← ws-b
-
-名称冲突（1）
-  ! shared-skill
-      生效：ws-a
-      被遮蔽：ws-b
-
-指令文件（2，共 8421 字节）
-  · ws-a — /repo/app/AGENTS.md（6100 字节）
-  · ws-b — /repo/docs/AGENTS.md（2321 字节）
-
-写入范围：仅活动文件夹可写；其他成员可读，但写入会被沙箱拒绝（DSH 的写入边界由单个 workspaceRoot 推导）。
-
-未贡献的文件夹（1）
-  · ws-c：该文件夹没有提供任何技能（未找到 .dsh/skills 或 .agents/skills，或目录为空）。
-```
-
-The point is that **every "did not take effect" carries a named reason**. If the `ws-c` above said nothing at all, the user would be left thinking "why aren't my skills loading" — which is exactly the hardest thing to diagnose in a primary/secondary folder design.
+Loom discovers project skills under each member’s `.dsh/skills` and `.agents/skills` folders. The preview queries the DSH skill catalog for the starting folder to show which version takes effect and which project sources it overrides. The folder details also list discovered `AGENTS.md` and `CLAUDE.md` files. DSH loads applicable rules based on the session directory.
 
 ### Highlight 2: a folder can belong to several projects at once
 
@@ -258,7 +234,7 @@ For example: if the workspace of the session `重构解析器` is a member of bo
 | Start a new chat in a folder | The group row's `+` |
 | Start a new chat in no particular folder | The `+` on the right of the **Chats** section; the first time it asks you to pick a folder and remembers it |
 | Change the Chats default folder | The `⋯` on the right of the **Chats** section → set / clear the default folder |
-| **See what this project will actually load** | The project row's `⋯` → **Context preflight** |
+| Preview the starting folder, write access, and project skills | The project row’s `⋯` → **New session environment** |
 | Rename / fork / archive a session | The session row's `⋯` |
 | **Move a conversation to another workspace** | The session row's `⋯` → **Move to another workspace** (read the plan, then confirm) |
 | Create / rename / delete a workspace | The `+` on the right of the **Workspaces** section; the workspace row's `⋯` |
@@ -378,13 +354,9 @@ The real friction is concentrated in **Windows ACLs**: `workspace-sid.ts` is des
 
 Loom does not take it upon itself to bypass the security boundary, but this upstream path has a clearly better benefit/cost ratio than the first estimate suggested, and it deserves an RFC of its own. See the [design notes](design.md#22-暂不做但比原先估计的小得多扩展沙箱为多根).
 
-### Known defect: the preflight text is Chinese only
+### Preview language
 
-The client UI is bilingual — `dictionaries` in `src/client.cjs` carries both `zh` and `en`. **But the text inside the context preflight is hardcoded Chinese**, so an English UI shows Chinese sentences wrapped in English labels.
-
-The source is on the host side: `src/core/context-plan.cjs` emits **finished sentences** instead of structured data — the write-boundary wording (`describeWriteBoundary`, lines 62/70/77/84), the reasons a member contributes nothing (lines 127/170/196), and the whole text report (`formatContextPlan`).
-
-This is a design problem rather than a missing translation: **a pure function should not produce prose in one language.** The correct fix is for it to return descriptors — mode, writable members, reason keys — and let the client render them from its own dictionary. It is **not fixed here**: doing it properly means changing the core, the client rendering and the tests together, and shipping an unverified half of it would be worse than leaving it stated.
+The dialog and copied results use the current UI language. Folder names, skill names, and paths retain their original spelling.
 
 ## Architecture
 

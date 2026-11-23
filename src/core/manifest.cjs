@@ -278,10 +278,14 @@ function findProject(manifest, projectId) {
  * removes.
  */
 function defaultWorkspaceFor(manifest, projectId) {
-  const project = findProject(manifest, projectId);
+  return projectStartWorkspaceId(findProject(manifest, projectId));
+}
+
+function projectStartWorkspaceId(project) {
   if (project === undefined) return undefined;
   const preferred = project.defaultWorkspaceId;
-  const chosen = project.members.find(member => member.workspaceId === preferred) ?? project.members[0];
+  const members = project.members ?? [];
+  const chosen = members.find(member => member.workspaceId === preferred) ?? members[0];
   return chosen?.workspaceId;
 }
 
@@ -403,6 +407,7 @@ module.exports = {
   normalizeChatsCwd,
   normalizeComparablePath,
   normalizeManifest,
+  projectStartWorkspaceId,
   projectsContaining,
   readManifest,
   removeProject,

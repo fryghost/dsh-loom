@@ -528,6 +528,58 @@ test('preflight names a folder whose workspace cannot be resolved', async () => 
   }
 });
 
+test('preflight previews the fallback start folder and reports each empty folder once', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const alpha = join(home, 'alpha');
+  const beta = join(home, 'beta');
+  await Promise.all([mkdir(alpha), mkdir(beta)]);
+  const workspaces = new Map([
+    ['a', { path: alpha, title: '代码' }],
+    ['b', { path: beta, title: '工具' }],
+  ]);
+  const handler = createRpcHandler(fakeContext({ services: {
+    workspaceRegistry: { get: id => workspaces.get(id) },
+    sandboxPolicy: { defaultMode: 'workspace-write' },
+  } }), home);
+  await handler('putManifest', {
+    manifest: { schemaVersion: 2, projects: [{ id: 'p', title: '项目', members: ['a', 'b'] }] },
+  });
+
+  const { value: { plan } } = await handler('preflight', { projectId: 'p' });
+  assert.equal(plan.activeWorkspaceId, 'a');
+  assert.equal(plan.writeBoundary.activeWorkspaceId, 'a');
+  assert.deepEqual(plan.folders.map(({ name, status, skillCount, instructionCount }) =>
+    [name, status, skillCount, instructionCount]), [
+    ['代码', 'ready', 0, 0],
+    ['工具', 'ready', 0, 0],
+  ]);
+});
+
+test('preflight applies default write roots to nested and explicitly granted project folders', async t => {
+  const home = await mkdtemp(join(tmpdir(), 'loom-rpc-'));
+  t.after(() => rm(home, { recursive: true, force: true }));
+  const alpha = join(home, 'alpha');
+  const nested = join(alpha, 'nested');
+  const granted = join(home, 'granted');
+  const other = join(home, 'alpha-sibling');
+  await Promise.all([mkdir(nested, { recursive: true }), mkdir(granted), mkdir(other)]);
+  const workspaces = new Map(Object.entries({ alpha, nested, granted, other })
+    .map(([id, path]) => [id, { path, title: id }]));
+  const handler = createRpcHandler(fakeContext({ services: {
+    workspaceRegistry: { get: id => workspaces.get(id) },
+    sandboxPolicy: {
+      defaultMode: 'workspace-write',
+      additionalWritableRoots: [granted],
+    },
+  } }), home);
+  await handler('putManifest', {
+    manifest: { schemaVersion: 2, projects: [{ id: 'p', title: 'Project', members: [...workspaces.keys()] }] },
+  });
+  const { value: { plan } } = await handler('preflight', { projectId: 'p' });
+  assert.deepEqual(plan.writeBoundary.writableWorkspaceIds, ['alpha', 'nested', 'granted']);
+});
+
 /* ------------------------------------------------------------------ *
  * Migration over the bridge
  * ------------------------------------------------------------------ */

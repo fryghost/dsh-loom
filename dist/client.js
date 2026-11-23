@@ -34,9 +34,231 @@ var require_bridge = __commonJS({
   }
 });
 
+// src/core/manifest.cjs
+var require_manifest = __commonJS({
+  "src/core/manifest.cjs"(exports2, module2) {
+    var SCHEMA_VERSION = 2;
+    var CHATS_CWD = "chatsCwd";
+    var ROLE_WRITABLE = "writable";
+    var ROLE_READONLY = "readonly";
+    var ROLES = [ROLE_WRITABLE, ROLE_READONLY];
+    function isPlainObject(value) {
+      return typeof value === "object" && value !== null && !Array.isArray(value);
+    }
+    function normalizeChatsCwd(value) {
+      if (typeof value !== "string") return void 0;
+      const trimmed = value.trim();
+      return trimmed.length > 0 ? trimmed : void 0;
+    }
+    function normalizeComparablePath(value) {
+      if (typeof value !== "string") return "";
+      return value.trim().replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
+    }
+    function uniqueStrings(values) {
+      const seen = /* @__PURE__ */ new Set();
+      const result = [];
+      for (const value of values || []) {
+        if (typeof value !== "string" || value.length === 0 || seen.has(value)) continue;
+        seen.add(value);
+        result.push(value);
+      }
+      return result;
+    }
+    function normalizeTitle(value, fallback) {
+      if (typeof value !== "string") return fallback;
+      const trimmed = value.trim().slice(0, 80);
+      return trimmed.length > 0 ? trimmed : fallback;
+    }
+    function normalizeRole(value) {
+      return ROLES.includes(value) ? value : ROLE_WRITABLE;
+    }
+    function normalizeMember(raw) {
+      if (typeof raw === "string") {
+        const workspaceId2 = raw.trim();
+        return workspaceId2.length === 0 ? void 0 : { workspaceId: workspaceId2, role: ROLE_WRITABLE };
+      }
+      if (!isPlainObject(raw)) return void 0;
+      const workspaceId = typeof raw.workspaceId === "string" ? raw.workspaceId.trim() : "";
+      if (workspaceId.length === 0) return void 0;
+      const note = typeof raw.note === "string" ? raw.note.trim().slice(0, 200) : "";
+      return {
+        workspaceId,
+        role: normalizeRole(raw.role),
+        ...note.length > 0 ? { note } : {}
+      };
+    }
+    function mergeMembers2(previous, selectedWorkspaceIds) {
+      const previousById = /* @__PURE__ */ new Map();
+      for (const member of Array.isArray(previous) ? previous : []) {
+        const normalized = normalizeMember(member);
+        if (normalized !== void 0 && !previousById.has(normalized.workspaceId)) {
+          previousById.set(normalized.workspaceId, normalized);
+        }
+      }
+      return uniqueStrings(selectedWorkspaceIds).map((workspaceId) => {
+        const kept = previousById.get(workspaceId);
+        return kept === void 0 ? { workspaceId, role: ROLE_WRITABLE } : kept;
+      });
+    }
+    function normalizeManifest(raw, options = {}) {
+      const known = options.knownWorkspaceIds === void 0 ? void 0 : new Set(knownWorkspaceIdsOf(options.knownWorkspaceIds));
+      const projects = [];
+      const dropped = [];
+      const seenProjectIds = /* @__PURE__ */ new Set();
+      for (const rawProject of isPlainObject(raw) && Array.isArray(raw.projects) ? raw.projects : []) {
+        if (!isPlainObject(rawProject)) {
+          dropped.push({ reason: "not-an-object" });
+          continue;
+        }
+        const id = typeof rawProject.id === "string" ? rawProject.id.trim() : "";
+        if (id.length === 0 || seenProjectIds.has(id)) {
+          dropped.push({ reason: id.length === 0 ? "missing-id" : "duplicate-id", id });
+          continue;
+        }
+        const members = [];
+        const seenMembers = /* @__PURE__ */ new Set();
+        for (const rawMember of Array.isArray(rawProject.members) ? rawProject.members : []) {
+          const member = normalizeMember(rawMember);
+          if (member === void 0) {
+            dropped.push({ reason: "invalid-member", projectId: id });
+            continue;
+          }
+          if (seenMembers.has(member.workspaceId)) continue;
+          seenMembers.add(member.workspaceId);
+          members.push(member);
+        }
+        const defaultWorkspaceId = typeof rawProject.defaultWorkspaceId === "string" && seenMembers.has(rawProject.defaultWorkspaceId) ? rawProject.defaultWorkspaceId : members[0]?.workspaceId;
+        seenProjectIds.add(id);
+        projects.push({
+          id,
+          title: normalizeTitle(rawProject.title, id),
+          members: members.map((member) => known === void 0 || known.has(member.workspaceId) ? member : { ...member, missing: true }),
+          ...defaultWorkspaceId === void 0 ? {} : { defaultWorkspaceId },
+          createdAt: typeof rawProject.createdAt === "string" ? rawProject.createdAt : void 0,
+          updatedAt: typeof rawProject.updatedAt === "string" ? rawProject.updatedAt : void 0
+        });
+      }
+      const chatsCwd = normalizeChatsCwd(isPlainObject(raw) ? raw[CHATS_CWD] : void 0);
+      return {
+        schemaVersion: SCHEMA_VERSION,
+        projects,
+        ...chatsCwd === void 0 ? {} : { [CHATS_CWD]: chatsCwd },
+        dropped
+      };
+    }
+    function knownWorkspaceIdsOf(value) {
+      return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
+    }
+    function readManifest(value, options = {}) {
+      if (!isPlainObject(value)) return normalizeManifest(void 0, options);
+      if (value.schemaVersion === SCHEMA_VERSION) return normalizeManifest(value, options);
+      if (Number.isInteger(value.schemaVersion) && value.schemaVersion > SCHEMA_VERSION) {
+        return { ...normalizeManifest(void 0, options), supported: false, foundVersion: value.schemaVersion };
+      }
+      return normalizeManifest(void 0, options);
+    }
+    function projectsContaining(manifest, workspaceId) {
+      if (typeof workspaceId !== "string" || workspaceId.length === 0) return [];
+      return (manifest?.projects || []).filter((project) => project.members.some((member) => member.workspaceId === workspaceId));
+    }
+    function findProject(manifest, projectId) {
+      return (manifest?.projects || []).find((project) => project.id === projectId);
+    }
+    function defaultWorkspaceFor(manifest, projectId) {
+      return projectStartWorkspaceId(findProject(manifest, projectId));
+    }
+    function projectStartWorkspaceId(project) {
+      if (project === void 0) return void 0;
+      const preferred = project.defaultWorkspaceId;
+      const members = project.members ?? [];
+      const chosen = members.find((member) => member.workspaceId === preferred) ?? members[0];
+      return chosen?.workspaceId;
+    }
+    function upsertProject(manifest, project, options = {}) {
+      const incoming = normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [project] }, options).projects[0];
+      if (incoming === void 0) return normalizeManifest(manifest, options);
+      const rest = (manifest?.projects || []).filter((existing) => existing.id !== incoming.id);
+      return normalizeManifest(
+        withChatsCwd(manifest, { schemaVersion: SCHEMA_VERSION, projects: [...rest, incoming] }),
+        options
+      );
+    }
+    function removeProject(manifest, projectId) {
+      return normalizeManifest(withChatsCwd(manifest, {
+        schemaVersion: SCHEMA_VERSION,
+        projects: (manifest?.projects || []).filter((project) => project.id !== projectId)
+      }));
+    }
+    function withChatsCwd(previous, next) {
+      const chatsCwd = normalizeChatsCwd(previous?.[CHATS_CWD]);
+      return chatsCwd === void 0 ? next : { ...next, [CHATS_CWD]: chatsCwd };
+    }
+    function migrateFromV1(value) {
+      const groups = Array.isArray(value) ? value : isPlainObject(value) ? value.groups : void 0;
+      if (!Array.isArray(groups)) return { manifest: normalizeManifest(void 0), migrated: 0, note: "no-v1-groups" };
+      const projects = [];
+      for (const group of groups) {
+        if (!isPlainObject(group)) continue;
+        const id = typeof group.id === "string" ? group.id.trim() : "";
+        if (id.length === 0) continue;
+        const memberIds = uniqueStrings(group.memberWorkspaceIds);
+        if (memberIds.length === 0) continue;
+        projects.push({
+          id,
+          title: normalizeTitle(group.title, id),
+          members: memberIds.map((workspaceId) => ({ workspaceId, role: ROLE_WRITABLE })),
+          ...typeof group.primaryWorkspaceId === "string" && memberIds.includes(group.primaryWorkspaceId) ? { defaultWorkspaceId: group.primaryWorkspaceId } : {}
+        });
+      }
+      return {
+        manifest: normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects }),
+        migrated: projects.length,
+        note: "v1-membership-was-exclusive; previously dropped memberships are not recoverable"
+      };
+    }
+    function chatsFolderOf(manifest) {
+      return normalizeChatsCwd(manifest?.[CHATS_CWD]);
+    }
+    function setChatsFolder(manifest, path) {
+      const chatsCwd = normalizeChatsCwd(path);
+      return normalizeManifest({
+        schemaVersion: SCHEMA_VERSION,
+        projects: manifest?.projects || [],
+        ...chatsCwd === void 0 ? {} : { [CHATS_CWD]: chatsCwd }
+      });
+    }
+    function createEmptyManifest() {
+      return { schemaVersion: SCHEMA_VERSION, projects: [], dropped: [] };
+    }
+    module2.exports = {
+      CHATS_CWD,
+      ROLE_READONLY,
+      ROLE_WRITABLE,
+      ROLES,
+      SCHEMA_VERSION,
+      chatsFolderOf,
+      createEmptyManifest,
+      defaultWorkspaceFor,
+      findProject,
+      mergeMembers: mergeMembers2,
+      migrateFromV1,
+      normalizeChatsCwd,
+      normalizeComparablePath,
+      normalizeManifest,
+      projectStartWorkspaceId,
+      projectsContaining,
+      readManifest,
+      removeProject,
+      setChatsFolder,
+      upsertProject
+    };
+  }
+});
+
 // src/core/sections.cjs
 var require_sections = __commonJS({
   "src/core/sections.cjs"(exports2, module2) {
+    var { projectStartWorkspaceId } = require_manifest();
     function sessionVisible(summary, current, archived, projectionReady) {
       const delegated = summary.origin === "subagent";
       const shell = projectionReady === true && (summary.title === void 0 || summary.title === "") && summary.id !== current && summary.running !== true;
@@ -92,7 +314,7 @@ var require_sections = __commonJS({
         folders: (project.members || []).length,
         // Where the row's New chat starts. A declared starting folder only picks a
         // starting point; membership never privileges one folder during discovery.
-        startWorkspaceId: project.defaultWorkspaceId || project.members && project.members[0] && project.members[0].workspaceId,
+        startWorkspaceId: projectStartWorkspaceId(project),
         sessions: collect((project.members || []).flatMap((member) => {
           const workspace = workspaceById.get(member.workspaceId);
           return workspace === void 0 ? [] : workspaceSessionIds(workspace);
@@ -450,223 +672,6 @@ var require_search_panel = __commonJS({
   }
 });
 
-// src/core/manifest.cjs
-var require_manifest = __commonJS({
-  "src/core/manifest.cjs"(exports2, module2) {
-    var SCHEMA_VERSION = 2;
-    var CHATS_CWD = "chatsCwd";
-    var ROLE_WRITABLE = "writable";
-    var ROLE_READONLY = "readonly";
-    var ROLES = [ROLE_WRITABLE, ROLE_READONLY];
-    function isPlainObject(value) {
-      return typeof value === "object" && value !== null && !Array.isArray(value);
-    }
-    function normalizeChatsCwd(value) {
-      if (typeof value !== "string") return void 0;
-      const trimmed = value.trim();
-      return trimmed.length > 0 ? trimmed : void 0;
-    }
-    function normalizeComparablePath(value) {
-      if (typeof value !== "string") return "";
-      return value.trim().replace(/[\\/]+$/, "").replace(/\\/g, "/").toLowerCase();
-    }
-    function uniqueStrings(values) {
-      const seen = /* @__PURE__ */ new Set();
-      const result = [];
-      for (const value of values || []) {
-        if (typeof value !== "string" || value.length === 0 || seen.has(value)) continue;
-        seen.add(value);
-        result.push(value);
-      }
-      return result;
-    }
-    function normalizeTitle(value, fallback) {
-      if (typeof value !== "string") return fallback;
-      const trimmed = value.trim().slice(0, 80);
-      return trimmed.length > 0 ? trimmed : fallback;
-    }
-    function normalizeRole(value) {
-      return ROLES.includes(value) ? value : ROLE_WRITABLE;
-    }
-    function normalizeMember(raw) {
-      if (typeof raw === "string") {
-        const workspaceId2 = raw.trim();
-        return workspaceId2.length === 0 ? void 0 : { workspaceId: workspaceId2, role: ROLE_WRITABLE };
-      }
-      if (!isPlainObject(raw)) return void 0;
-      const workspaceId = typeof raw.workspaceId === "string" ? raw.workspaceId.trim() : "";
-      if (workspaceId.length === 0) return void 0;
-      const note = typeof raw.note === "string" ? raw.note.trim().slice(0, 200) : "";
-      return {
-        workspaceId,
-        role: normalizeRole(raw.role),
-        ...note.length > 0 ? { note } : {}
-      };
-    }
-    function mergeMembers2(previous, selectedWorkspaceIds) {
-      const previousById = /* @__PURE__ */ new Map();
-      for (const member of Array.isArray(previous) ? previous : []) {
-        const normalized = normalizeMember(member);
-        if (normalized !== void 0 && !previousById.has(normalized.workspaceId)) {
-          previousById.set(normalized.workspaceId, normalized);
-        }
-      }
-      return uniqueStrings(selectedWorkspaceIds).map((workspaceId) => {
-        const kept = previousById.get(workspaceId);
-        return kept === void 0 ? { workspaceId, role: ROLE_WRITABLE } : kept;
-      });
-    }
-    function normalizeManifest(raw, options = {}) {
-      const known = options.knownWorkspaceIds === void 0 ? void 0 : new Set(knownWorkspaceIdsOf(options.knownWorkspaceIds));
-      const projects = [];
-      const dropped = [];
-      const seenProjectIds = /* @__PURE__ */ new Set();
-      for (const rawProject of isPlainObject(raw) && Array.isArray(raw.projects) ? raw.projects : []) {
-        if (!isPlainObject(rawProject)) {
-          dropped.push({ reason: "not-an-object" });
-          continue;
-        }
-        const id = typeof rawProject.id === "string" ? rawProject.id.trim() : "";
-        if (id.length === 0 || seenProjectIds.has(id)) {
-          dropped.push({ reason: id.length === 0 ? "missing-id" : "duplicate-id", id });
-          continue;
-        }
-        const members = [];
-        const seenMembers = /* @__PURE__ */ new Set();
-        for (const rawMember of Array.isArray(rawProject.members) ? rawProject.members : []) {
-          const member = normalizeMember(rawMember);
-          if (member === void 0) {
-            dropped.push({ reason: "invalid-member", projectId: id });
-            continue;
-          }
-          if (seenMembers.has(member.workspaceId)) continue;
-          seenMembers.add(member.workspaceId);
-          members.push(member);
-        }
-        const defaultWorkspaceId = typeof rawProject.defaultWorkspaceId === "string" && seenMembers.has(rawProject.defaultWorkspaceId) ? rawProject.defaultWorkspaceId : members[0]?.workspaceId;
-        seenProjectIds.add(id);
-        projects.push({
-          id,
-          title: normalizeTitle(rawProject.title, id),
-          members: members.map((member) => known === void 0 || known.has(member.workspaceId) ? member : { ...member, missing: true }),
-          ...defaultWorkspaceId === void 0 ? {} : { defaultWorkspaceId },
-          createdAt: typeof rawProject.createdAt === "string" ? rawProject.createdAt : void 0,
-          updatedAt: typeof rawProject.updatedAt === "string" ? rawProject.updatedAt : void 0
-        });
-      }
-      const chatsCwd = normalizeChatsCwd(isPlainObject(raw) ? raw[CHATS_CWD] : void 0);
-      return {
-        schemaVersion: SCHEMA_VERSION,
-        projects,
-        ...chatsCwd === void 0 ? {} : { [CHATS_CWD]: chatsCwd },
-        dropped
-      };
-    }
-    function knownWorkspaceIdsOf(value) {
-      return Array.isArray(value) ? value.filter((item) => typeof item === "string") : [];
-    }
-    function readManifest(value, options = {}) {
-      if (!isPlainObject(value)) return normalizeManifest(void 0, options);
-      if (value.schemaVersion === SCHEMA_VERSION) return normalizeManifest(value, options);
-      if (Number.isInteger(value.schemaVersion) && value.schemaVersion > SCHEMA_VERSION) {
-        return { ...normalizeManifest(void 0, options), supported: false, foundVersion: value.schemaVersion };
-      }
-      return normalizeManifest(void 0, options);
-    }
-    function projectsContaining(manifest, workspaceId) {
-      if (typeof workspaceId !== "string" || workspaceId.length === 0) return [];
-      return (manifest?.projects || []).filter((project) => project.members.some((member) => member.workspaceId === workspaceId));
-    }
-    function findProject(manifest, projectId) {
-      return (manifest?.projects || []).find((project) => project.id === projectId);
-    }
-    function defaultWorkspaceFor(manifest, projectId) {
-      const project = findProject(manifest, projectId);
-      if (project === void 0) return void 0;
-      const preferred = project.defaultWorkspaceId;
-      const chosen = project.members.find((member) => member.workspaceId === preferred) ?? project.members[0];
-      return chosen?.workspaceId;
-    }
-    function upsertProject(manifest, project, options = {}) {
-      const incoming = normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects: [project] }, options).projects[0];
-      if (incoming === void 0) return normalizeManifest(manifest, options);
-      const rest = (manifest?.projects || []).filter((existing) => existing.id !== incoming.id);
-      return normalizeManifest(
-        withChatsCwd(manifest, { schemaVersion: SCHEMA_VERSION, projects: [...rest, incoming] }),
-        options
-      );
-    }
-    function removeProject(manifest, projectId) {
-      return normalizeManifest(withChatsCwd(manifest, {
-        schemaVersion: SCHEMA_VERSION,
-        projects: (manifest?.projects || []).filter((project) => project.id !== projectId)
-      }));
-    }
-    function withChatsCwd(previous, next) {
-      const chatsCwd = normalizeChatsCwd(previous?.[CHATS_CWD]);
-      return chatsCwd === void 0 ? next : { ...next, [CHATS_CWD]: chatsCwd };
-    }
-    function migrateFromV1(value) {
-      const groups = Array.isArray(value) ? value : isPlainObject(value) ? value.groups : void 0;
-      if (!Array.isArray(groups)) return { manifest: normalizeManifest(void 0), migrated: 0, note: "no-v1-groups" };
-      const projects = [];
-      for (const group of groups) {
-        if (!isPlainObject(group)) continue;
-        const id = typeof group.id === "string" ? group.id.trim() : "";
-        if (id.length === 0) continue;
-        const memberIds = uniqueStrings(group.memberWorkspaceIds);
-        if (memberIds.length === 0) continue;
-        projects.push({
-          id,
-          title: normalizeTitle(group.title, id),
-          members: memberIds.map((workspaceId) => ({ workspaceId, role: ROLE_WRITABLE })),
-          ...typeof group.primaryWorkspaceId === "string" && memberIds.includes(group.primaryWorkspaceId) ? { defaultWorkspaceId: group.primaryWorkspaceId } : {}
-        });
-      }
-      return {
-        manifest: normalizeManifest({ schemaVersion: SCHEMA_VERSION, projects }),
-        migrated: projects.length,
-        note: "v1-membership-was-exclusive; previously dropped memberships are not recoverable"
-      };
-    }
-    function chatsFolderOf(manifest) {
-      return normalizeChatsCwd(manifest?.[CHATS_CWD]);
-    }
-    function setChatsFolder(manifest, path) {
-      const chatsCwd = normalizeChatsCwd(path);
-      return normalizeManifest({
-        schemaVersion: SCHEMA_VERSION,
-        projects: manifest?.projects || [],
-        ...chatsCwd === void 0 ? {} : { [CHATS_CWD]: chatsCwd }
-      });
-    }
-    function createEmptyManifest() {
-      return { schemaVersion: SCHEMA_VERSION, projects: [], dropped: [] };
-    }
-    module2.exports = {
-      CHATS_CWD,
-      ROLE_READONLY,
-      ROLE_WRITABLE,
-      ROLES,
-      SCHEMA_VERSION,
-      chatsFolderOf,
-      createEmptyManifest,
-      defaultWorkspaceFor,
-      findProject,
-      mergeMembers: mergeMembers2,
-      migrateFromV1,
-      normalizeChatsCwd,
-      normalizeComparablePath,
-      normalizeManifest,
-      projectsContaining,
-      readManifest,
-      removeProject,
-      setChatsFolder,
-      upsertProject
-    };
-  }
-});
-
 // src/client.cjs
 var React = require("react");
 var {
@@ -712,29 +717,48 @@ var dictionaries = {
     cancel: "\u53D6\u6D88",
     edit: "\u7F16\u8F91",
     delete: "\u5220\u9664",
-    preflight: "\u4E0A\u4E0B\u6587\u9884\u68C0",
-    preflightHint: "\u5728\u5F00\u59CB\u4F1A\u8BDD\u524D\uFF0C\u67E5\u770B\u8FD9\u4E2A\u9879\u76EE\u5B9E\u9645\u4F1A\u52A0\u8F7D\u4EC0\u4E48\u3002",
+    preflight: "\u65B0\u4F1A\u8BDD\u73AF\u5883",
     running: "\u6B63\u5728\u5206\u6790\u2026",
-    skills: "\u6280\u80FD",
-    noSkills: "\u6CA1\u6709\u6280\u80FD",
-    collisions: "\u540D\u79F0\u51B2\u7A81",
-    collisionHint: "\u540C\u540D\u6280\u80FD\u53EA\u4F1A\u751F\u6548\u4E00\u4E2A\uFF1B\u4E0B\u9762\u662F\u88AB\u906E\u853D\u7684\u6765\u6E90\u3002",
-    winner: "\u751F\u6548",
-    shadowed: "\u88AB\u906E\u853D",
-    instructions: "\u6307\u4EE4\u6587\u4EF6",
-    noInstructions: "\u6CA1\u6709\u6307\u4EE4\u6587\u4EF6",
+    checkingEnvironment: "\u6B63\u5728\u68C0\u67E5\u4F1A\u8BDD\u73AF\u5883\u2026",
+    preflightFailed: "\u68C0\u67E5\u5931\u8D25\uFF0C\u8BF7\u91CD\u65B0\u68C0\u67E5\u3002",
+    preflightOlderHost: "\u5F53\u524D DSH \u6B63\u5728\u4F7F\u7528\u65E7\u7248 Loom \u670D\u52A1\u3002\u52A0\u8F7D\u65B0\u7248\u540E\u53EF\u4EE5\u67E5\u770B\u4F1A\u8BDD\u73AF\u5883\u3002",
+    startFolder: "\u542F\u52A8\u4F4D\u7F6E",
+    noStartFolder: "\u672A\u8BBE\u7F6E\u542F\u52A8\u6587\u4EF6\u5939",
     writeScope: "\u5199\u5165\u8303\u56F4",
-    silentFolders: "\u672A\u8D21\u732E\u7684\u6587\u4EF6\u5939",
-    silentHint: "\u8FD9\u4E9B\u6587\u4EF6\u5939\u5F53\u524D\u6CA1\u6709\u5411\u4F1A\u8BDD\u63D0\u4F9B\u4EFB\u4F55\u5185\u5BB9\u3002",
+    writeAll: "\u6309\u9ED8\u8BA4\u6743\u9650\uFF0C\u6240\u6709\u9879\u76EE\u6587\u4EF6\u5939\u53EF\u5199",
+    writeOneFolder: "\u6309\u9ED8\u8BA4\u6587\u4EF6\u6743\u9650\uFF0C\u4EC5\u300C{name}\u300D\u53EF\u5199",
+    writeSelectedFolders: "\u6309\u9ED8\u8BA4\u6587\u4EF6\u6743\u9650\uFF0C{names}\u53EF\u5199",
+    writeNone: "\u6309\u9ED8\u8BA4\u6743\u9650\uFF0C\u6240\u6709\u9879\u76EE\u6587\u4EF6\u5939\u53EA\u8BFB",
+    writeUnknown: "\u672A\u80FD\u786E\u8BA4\u9ED8\u8BA4\u5199\u5165\u8303\u56F4",
+    projectSkillCount: "\u9879\u76EE\u6280\u80FD {count} \u4E2A",
+    discoveredSkillCount: "\u53D1\u73B0\u6280\u80FD {count} \u4E2A",
+    ruleFileCount: "\u53D1\u73B0\u89C4\u5219\u6587\u4EF6 {count} \u4E2A",
+    skillConflictCount: "\u540C\u540D\u51B2\u7A81 {count} \u4E2A",
+    folderDetails: "\u67E5\u770B\u6587\u4EF6\u5939\u8BE6\u60C5",
+    skillDetails: "\u67E5\u770B\u9879\u76EE\u6280\u80FD",
+    folderSkillCount: "\u6280\u80FD {count} \u4E2A",
+    folderRuleCount: "\u89C4\u5219 {count} \u4E2A",
+    projectRuleScope: "DSH \u6309\u542F\u52A8\u76EE\u5F55\u67E5\u627E\u89C4\u5219\uFF0C\u5176\u4ED6\u6210\u5458\u7684\u89C4\u5219\u6587\u4EF6\u4EC5\u4F9B\u67E5\u770B\u3002",
+    skillCatalogUnconfirmed: "\u5DF2\u626B\u63CF\u9879\u76EE\u6587\u4EF6\u5939\uFF0C\u6682\u672A\u786E\u8BA4\u4F1A\u8BDD\u53EF\u7528\u7684\u6280\u80FD\u7248\u672C\u3002",
+    skillUnavailable: "\u4F1A\u8BDD\u53EF\u7528\u5217\u8868\u4E2D\u672A\u627E\u5230\u6B64\u6280\u80FD",
+    folderProblems: "{count} \u4E2A\u6587\u4EF6\u5939\u9700\u8981\u68C0\u67E5",
+    unknownFolder: "\u672A\u77E5\u6587\u4EF6\u5939",
+    folderUnresolved: "\u5DE5\u4F5C\u533A\u627E\u4E0D\u5230",
+    folderMissing: "\u6587\u4EF6\u5939\u4E0D\u5B58\u5728",
+    folderUnreadable: "\u90E8\u5206\u5185\u5BB9\u68C0\u67E5\u5931\u8D25",
+    winner: "\u4F7F\u7528",
+    shadowed: "\u88AB\u8986\u76D6",
+    skillCandidate: "\u540C\u540D\u6765\u6E90",
+    otherSkillSource: "\u9879\u76EE\u4EE5\u5916\u7684\u6280\u80FD\u6765\u6E90",
     from: "\u6765\u81EA",
     role: "\u89D2\u8272",
     writable: "\u53EF\u5199",
     readonly: "\u53EA\u8BFB",
     missing: "\u5DF2\u5931\u8054",
     missingHint: "\u8BE5\u6587\u4EF6\u5939\u5F53\u524D\u65E0\u6CD5\u89E3\u6790\uFF1B\u9879\u76EE\u4ECD\u4FDD\u7559\u6B64\u6210\u5458\u3002",
-    copyPlan: "\u590D\u5236\u9884\u68C0\u7ED3\u679C",
+    copyPlan: "\u590D\u5236\u7ED3\u679C",
     copied: "\u5DF2\u590D\u5236",
-    refresh: "\u91CD\u65B0\u5206\u6790",
+    refresh: "\u91CD\u65B0\u68C0\u67E5",
     needName: "\u8BF7\u8F93\u5165\u9879\u76EE\u540D\u79F0\u3002",
     needFolder: "\u81F3\u5C11\u9009\u62E9\u4E00\u4E2A\u6587\u4EF6\u5939\u3002",
     loadFailed: "\u8BFB\u53D6\u9879\u76EE\u5931\u8D25\uFF1A{message}",
@@ -744,7 +768,7 @@ var dictionaries = {
     memberCount: "{count} \u4E2A\u6587\u4EF6\u5939",
     subtitle: "\u628A\u591A\u4E2A\u6587\u4EF6\u5939\u7EC7\u6210\u4E00\u4E2A\u4F1A\u8BDD\u4E0A\u4E0B\u6587\u3002",
     emptyTitle: "\u8FD8\u6CA1\u6709\u9879\u76EE",
-    emptyHint: "\u65B0\u5EFA\u4E00\u4E2A\u9879\u76EE\uFF0C\u6307\u5411\u4E24\u4E2A\u6216\u66F4\u591A\u6587\u4EF6\u5939\u3002\u5B83\u4EEC\u7684\u6280\u80FD\u3001\u6307\u4EE4\u4E0E\u4E0A\u4E0B\u6587\u4F1A\u4E00\u8D77\u8FDB\u5165\u540C\u4E00\u4E2A\u4F1A\u8BDD\u3002",
+    emptyHint: "\u65B0\u5EFA\u4E00\u4E2A\u9879\u76EE\uFF0C\u5171\u7528\u591A\u4E2A\u6587\u4EF6\u5939\u63D0\u4F9B\u7684\u6280\u80FD\u3002",
     memberList: "\u53C2\u4E0E\u7684\u6587\u4EF6\u5939",
     defaultStart: "\u9ED8\u8BA4\u8D77\u70B9",
     folderPicker: "\u52FE\u9009\u53C2\u4E0E\u7684\u6587\u4EF6\u5939",
@@ -863,29 +887,48 @@ var dictionaries = {
     cancel: "Cancel",
     edit: "Edit",
     delete: "Delete",
-    preflight: "Context preflight",
-    preflightHint: "See exactly what this project will load, before you start a session.",
+    preflight: "New session environment",
     running: "Analyzing\u2026",
-    skills: "Skills",
-    noSkills: "No skills",
-    collisions: "Name collisions",
-    collisionHint: "Only one skill per name takes effect; the shadowed sources are listed below.",
-    winner: "Active",
-    shadowed: "Shadowed",
-    instructions: "Instruction files",
-    noInstructions: "No instruction files",
+    checkingEnvironment: "Checking the session environment\u2026",
+    preflightFailed: "Could not check the session environment. Please retry.",
+    preflightOlderHost: "DSH is running an older Loom service. Load the updated service to preview the session environment.",
+    startFolder: "Starting folder",
+    noStartFolder: "No starting folder set",
     writeScope: "Write scope",
-    silentFolders: "Folders contributing nothing",
-    silentHint: "These folders currently provide nothing to the session.",
+    writeAll: "Default permissions allow writing to all project folders",
+    writeOneFolder: "Default file permissions allow writing only to \u201C{name}\u201D",
+    writeSelectedFolders: "Default file permissions allow writing to {names}",
+    writeNone: "All project folders are read-only under default permissions",
+    writeUnknown: "Could not confirm default write access",
+    projectSkillCount: "Project skills {count}",
+    discoveredSkillCount: "Skills found {count}",
+    ruleFileCount: "Rule files found {count}",
+    skillConflictCount: "Name conflicts {count}",
+    folderDetails: "View folder details",
+    skillDetails: "View project skills",
+    folderSkillCount: "Skills {count}",
+    folderRuleCount: "Rules {count}",
+    projectRuleScope: "DSH looks up rules from the starting folder. Rules found in sibling folders are shown for reference.",
+    skillCatalogUnconfirmed: "Project folders were scanned. The skill versions available to the session are still unconfirmed.",
+    skillUnavailable: "This skill did not appear in the session catalog",
+    folderProblems: "{count} folders need attention",
+    unknownFolder: "Unknown folder",
+    folderUnresolved: "Workspace unavailable",
+    folderMissing: "Folder missing",
+    folderUnreadable: "Some contents could not be checked",
+    winner: "Using",
+    shadowed: "Overridden",
+    skillCandidate: "Same-name source",
+    otherSkillSource: "Skill source outside this project",
     from: "from",
     role: "Role",
     writable: "writable",
     readonly: "read-only",
     missing: "unresolved",
     missingHint: "This folder cannot be resolved right now; the membership is kept.",
-    copyPlan: "Copy preflight",
+    copyPlan: "Copy results",
     copied: "Copied",
-    refresh: "Re-analyze",
+    refresh: "Check again",
     needName: "Enter a project name.",
     needFolder: "Select at least one folder.",
     loadFailed: "Could not load projects: {message}",
@@ -895,7 +938,7 @@ var dictionaries = {
     memberCount: "{count} folders",
     subtitle: "Weave several folders into one session context.",
     emptyTitle: "No projects yet",
-    emptyHint: "Create a project and point it at two or more folders. Their skills, instructions, and context enter one session together.",
+    emptyHint: "Create a project to use skills from several folders in one session.",
     memberList: "Folders",
     defaultStart: "Starting point",
     folderPicker: "Select the folders",
@@ -1018,28 +1061,43 @@ var STYLES = `
 .loom-sidebar * { box-sizing: border-box; }
 
 .loom-preflight { display: flex; flex-direction: column; gap: 16px; }
-.loom-preflight-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.loom-boundary { color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 22px; }
-
-.loom-section { display: flex; flex-direction: column; gap: 6px; }
-.loom-section-title {
-  font-size: 12px; line-height: 20px; font-weight: 500;
-  display: flex; align-items: center; gap: 6px;
+.loom-preflight-overview {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 16px; row-gap: 6px; margin: 0; padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: 10px;
+  font-size: 14px; line-height: 22px;
 }
-.loom-section-title.loom-warn { color: var(--dsw-alias-state-warn-primary); }
-/* Preflight rows. Named distinctly because plain loom-row is ALSO the
-   sidebar's session row, and two rules sharing one name meant the later block
-   silently restyled the preflight into 32px session geometry. */
-.loom-preflight-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
-.loom-preflight-row + .loom-preflight-row { margin-top: 2px; }
-.loom-src {
+.loom-preflight-overview dt { color: var(--dsw-alias-label-secondary); }
+.loom-preflight-overview dd { margin: 0; overflow-wrap: anywhere; }
+.loom-preflight-summary {
+  display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 4px;
+  font-size: 13px; line-height: 20px;
+}
+.loom-preflight-details { border-top: 1px solid var(--dsw-alias-border-l3); }
+.loom-preflight-details + .loom-preflight-details { margin-top: -8px; }
+.loom-preflight-details > summary {
+  cursor: pointer; font-size: 14px; font-weight: 500; padding: 9px 2px;
+}
+.loom-preflight-details > summary:focus-visible {
+  outline: 2px solid currentColor; outline-offset: 2px; border-radius: 3px;
+}
+.loom-preflight-list { margin: 0; padding: 0; list-style: none; }
+.loom-preflight-item { padding: 9px 2px; }
+.loom-preflight-item + .loom-preflight-item { border-top: 1px solid var(--dsw-alias-border-l3); }
+.loom-preflight-row {
+  display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap;
+  font-size: 13px; line-height: 20px; overflow-wrap: anywhere;
+}
+.loom-preflight-row strong { font-weight: 500; min-width: 0; }
+.loom-preflight-counts { margin-inline-start: auto; }
+.loom-preflight-source {
   color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
+.loom-preflight-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .loom-muted { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 20px; }
 .loom-warn { color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }
 
-.loom-results { display: flex; flex-direction: column; gap: 12px; }
 .loom-pre {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -1527,7 +1585,7 @@ function createBridge(ctx) {
   return {
     getManifest: () => call("getManifest"),
     putManifest: (manifest) => call("putManifest", { manifest }),
-    preflight: (projectId, activeWorkspaceId) => call("preflight", { projectId, activeWorkspaceId }),
+    preflight: (projectId, activeWorkspaceId, refresh) => call("preflight", { projectId, activeWorkspaceId, refresh }),
     planMigration: (sessionId, targetWorkspaceId) => call("planMigration", { sessionId, targetWorkspaceId }),
     migrateSession: (sessionId, targetWorkspaceId) => call("migrateSession", { sessionId, targetWorkspaceId }),
     searchSessions: (request, signal) => call("searchSessions", request, signal),
@@ -1574,12 +1632,54 @@ function localTranslate(ctx) {
     return values === void 0 ? template : interpolate(template, values);
   };
 }
-function PreflightPanel({ plan, t, onRefresh, busy }) {
+function preflightFolderStatus(folder, t) {
+  return t({
+    unresolved: "folderUnresolved",
+    missing: "folderMissing",
+    unreadable: "folderUnreadable"
+  }[folder.status] ?? "folderUnreadable");
+}
+function preflightOverview(plan, t) {
+  const active = plan.folders.find((folder) => folder.workspaceId === plan.activeWorkspaceId);
+  const activeName = active?.name ?? t("unknownFolder");
+  const start = active === void 0 ? t("noStartFolder") : active.status === "ready" ? activeName : `${activeName} \xB7 ${preflightFolderStatus(active, t)}`;
+  const writeMode = plan.writeBoundary.writable;
+  let writeScope = t("writeUnknown");
+  if (writeMode === "all-members") writeScope = t("writeAll");
+  if (writeMode === "none") writeScope = t("writeNone");
+  const writableIds = plan.writeBoundary.writableWorkspaceIds ?? [];
+  const writableFolders = plan.folders.filter((folder) => folder.status === "ready" && writableIds.includes(folder.workspaceId));
+  if (writableFolders.length === 1) {
+    writeScope = interpolate(t("writeOneFolder"), { name: writableFolders[0].name ?? t("unknownFolder") });
+  } else if (writableFolders.length > 1) {
+    writeScope = interpolate(t("writeSelectedFolders"), {
+      names: writableFolders.map((folder) => folder.name ?? t("unknownFolder")).join(" \xB7 ")
+    });
+  }
+  const discoveredOnly = plan.skills.length > 0 && (!plan.skillCatalogConfirmed || plan.skills.some((skill) => skill.unavailable));
+  const metrics = [
+    interpolate(t(discoveredOnly ? "discoveredSkillCount" : "projectSkillCount"), { count: plan.skills.length }),
+    interpolate(t("ruleFileCount"), { count: plan.instructions.length })
+  ];
+  if (plan.collisions.length > 0) {
+    metrics.push(interpolate(t("skillConflictCount"), { count: plan.collisions.length }));
+  }
+  return { start, writeScope, metrics };
+}
+function preflightFolderAccess(folder, plan, t) {
+  if (folder.status !== "ready") return preflightFolderStatus(folder, t);
+  const mode = plan.writeBoundary.writable;
+  if (mode === "unknown") return t("writeUnknown");
+  return mode === "all-members" || plan.writeBoundary.writableWorkspaceIds?.includes(folder.workspaceId) ? t("writable") : t("readonly");
+}
+function preflightSkillSource(source, foldersById, t) {
+  return foldersById.get(source.workspaceId)?.name ?? t("otherSkillSource");
+}
+function PreflightPanel({ plan, t, onRefresh, busy, failure }) {
   const [copied, setCopied] = React.useState(false);
   const copy = React.useCallback(async () => {
-    const text = renderPlanText(plan, t);
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(renderPlanText(plan, t));
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
@@ -1588,112 +1688,135 @@ function PreflightPanel({ plan, t, onRefresh, busy }) {
   if (plan === void 0) {
     return h(
       "div",
-      { className: "loom-preflight" },
-      h("div", { className: "loom-muted" }, t("running"))
+      { className: "loom-preflight", "aria-busy": busy },
+      failure ? h("div", { className: "loom-warn", role: "alert" }, t(failure)) : h("div", { className: "loom-muted", role: "status" }, t("checkingEnvironment")),
+      failure && h(
+        "div",
+        { className: "loom-preflight-actions" },
+        h(Button, { variant: "outline", size: "sm", onClick: onRefresh }, t("refresh"))
+      )
     );
   }
+  const { start, writeScope, metrics } = preflightOverview(plan, t);
+  const foldersById = new Map(plan.folders.map((folder) => [folder.workspaceId, folder]));
+  const collisionsByName = new Map(plan.collisions.map((collision) => [collision.name, collision]));
+  const problemCount = plan.folders.filter((folder) => folder.status !== "ready").length;
   return h(
     "div",
-    { className: "loom-preflight" },
+    { className: "loom-preflight", "aria-busy": busy },
     h(
-      "div",
-      { className: "loom-preflight-head" },
-      h("span", { className: "loom-section-title" }, t("preflight")),
-      h(Button, { variant: "ghost", size: "sm", onClick: onRefresh, disabled: busy }, t("refresh"))
+      "dl",
+      { className: "loom-preflight-overview" },
+      h("dt", null, t("startFolder")),
+      h("dd", null, start),
+      h("dt", null, t("writeScope")),
+      h("dd", null, writeScope)
     ),
-    // The write boundary is stated, not implied.
-    h("div", { className: "loom-boundary" }, plan.writeBoundary.summary),
     h(
       "div",
-      { className: "loom-results" },
-      h(
-        "div",
-        { className: "loom-section" },
-        h("div", { className: "loom-section-title" }, `${t("skills")} \xB7 ${plan.skills.length}`),
-        plan.skills.length === 0 ? h("div", { className: "loom-muted" }, t("noSkills")) : plan.skills.map((skill) => h(
-          "div",
-          { key: `${skill.workspaceId}:${skill.name}` },
-          h("div", { className: "loom-preflight-row" }, h("span", null, skill.name)),
-          h("div", { className: "loom-src" }, `${t("from")} ${skill.workspaceId} \u2014 ${skill.path}`)
-        ))
-      ),
-      // Collisions are surfaced, never hidden.
-      plan.collisions.length > 0 && h(
-        "div",
-        { className: "loom-section" },
-        h("div", { className: "loom-section-title loom-warn" }, `${t("collisions")} \xB7 ${plan.collisions.length}`),
-        h("div", { className: "loom-muted" }, t("collisionHint")),
-        plan.collisions.map((collision) => h(
-          "div",
-          { key: collision.name },
+      { className: "loom-preflight-summary" },
+      metrics.map((metric) => h("span", { key: metric }, metric))
+    ),
+    problemCount > 0 && h(
+      "div",
+      { className: "loom-warn" },
+      interpolate(t("folderProblems"), { count: problemCount })
+    ),
+    plan.skills.length > 0 && h(
+      "details",
+      { className: "loom-preflight-details" },
+      h("summary", null, t("skillDetails")),
+      !plan.skillCatalogConfirmed && h("div", { className: "loom-muted" }, t("skillCatalogUnconfirmed")),
+      h("ul", { className: "loom-preflight-list" }, plan.skills.map((skill) => {
+        const collision = collisionsByName.get(skill.name);
+        const source = preflightSkillSource(skill, foldersById, t);
+        const sourceLabel = skill.unavailable ? t("skillUnavailable") : plan.skillCatalogConfirmed && collision ? `${t("winner")} ${source}` : source;
+        return h(
+          "li",
+          { key: skill.name, className: "loom-preflight-item" },
           h(
             "div",
             { className: "loom-preflight-row" },
-            h("span", null, collision.name),
-            h(Tag, { tone: "success" }, `${t("winner")} ${collision.winner.workspaceId}`)
+            h("strong", null, skill.name),
+            h("span", { className: "loom-muted" }, sourceLabel)
           ),
-          collision.shadowed.map((shadowed) => h(
+          skill.path && h("div", { className: "loom-preflight-source" }, skill.path),
+          collision?.shadowed.map((alternative) => h(
             "div",
-            { key: shadowed.workspaceId, className: "loom-preflight-row" },
-            h(Tag, { tone: "warning" }, `${t("shadowed")} ${shadowed.workspaceId}`)
+            {
+              key: `${alternative.workspaceId}:${alternative.path}`,
+              className: "loom-preflight-source"
+            },
+            `${t(plan.skillCatalogConfirmed && !skill.unavailable ? "shadowed" : "skillCandidate")} ${preflightSkillSource(alternative, foldersById, t)} \xB7 ${alternative.path}`
           ))
-        ))
-      ),
-      h(
-        "div",
-        { className: "loom-section" },
-        h("div", { className: "loom-section-title" }, `${t("instructions")} \xB7 ${plan.instructions.length}`),
-        plan.instructions.length === 0 ? h("div", { className: "loom-muted" }, t("noInstructions")) : plan.instructions.map((instruction) => h(
-          "div",
-          { key: instruction.path, className: "loom-src" },
-          `${instruction.workspaceId} \u2014 ${instruction.path} (${instruction.bytes} B)`
-        ))
-      ),
-      // The silent folders — the headline diagnostic.
-      plan.silent.length > 0 && h(
-        "div",
-        { className: "loom-section" },
-        h("div", { className: "loom-section-title loom-warn" }, `${t("silentFolders")} \xB7 ${plan.silent.length}`),
-        h("div", { className: "loom-muted" }, t("silentHint")),
-        plan.silent.map((entry, index) => h(
-          "div",
-          { key: `${entry.workspaceId}-${index}` },
+        );
+      }))
+    ),
+    plan.folders.length > 0 && h(
+      "details",
+      { className: "loom-preflight-details" },
+      h("summary", null, t("folderDetails")),
+      plan.instructions.length > 0 && h("div", { className: "loom-muted" }, t("projectRuleScope")),
+      h("ul", { className: "loom-preflight-list" }, plan.folders.map((folder) => {
+        const files = plan.instructions.filter((file) => file.workspaceId === folder.workspaceId);
+        return h(
+          "li",
+          { key: folder.workspaceId, className: "loom-preflight-item" },
           h(
             "div",
             { className: "loom-preflight-row" },
-            h(StateDot, { state: "warning" }),
-            h("span", null, entry.workspaceId)
+            h("strong", null, folder.name ?? t("unknownFolder")),
+            folder.status === "ready" ? h(Tag, { tone: "neutral" }, preflightFolderAccess(folder, plan, t)) : h("span", { className: "loom-warn" }, preflightFolderAccess(folder, plan, t)),
+            folder.status !== "unresolved" && folder.status !== "missing" && h("span", {
+              className: "loom-preflight-counts loom-muted"
+            }, `${interpolate(t("folderSkillCount"), { count: folder.skillCount })} \xB7 ${interpolate(t("folderRuleCount"), { count: folder.instructionCount })}`)
           ),
-          h("div", { className: "loom-src" }, entry.detail)
-        ))
-      )
+          folder.path && h("div", { className: "loom-preflight-source" }, folder.path),
+          files.length > 0 && h(
+            "div",
+            { className: "loom-preflight-source" },
+            files.map((file) => file.path.split(/[\\/]/).pop()).join(" \xB7 ")
+          )
+        );
+      }))
     ),
-    h(Button, { variant: "outline", size: "sm", onClick: copy }, copied ? t("copied") : t("copyPlan"))
+    h(
+      "div",
+      { className: "loom-preflight-actions" },
+      h(Button, { variant: "ghost", size: "sm", onClick: copy }, copied ? t("copied") : t("copyPlan")),
+      h(
+        Button,
+        { variant: "outline", size: "sm", onClick: onRefresh, disabled: busy },
+        busy ? t("checkingEnvironment") : t("refresh")
+      )
+    )
   );
 }
 function renderPlanText(plan, t) {
-  const lines = [];
-  lines.push(`${plan.projectTitle} \u2014 ${interpolate(t("memberCount"), { count: plan.memberCount })}`);
-  lines.push(`${t("writeScope")}: ${plan.writeBoundary.summary}`);
-  lines.push("");
-  lines.push(`${t("skills")} (${plan.skills.length})`);
-  for (const skill of plan.skills) lines.push(`  \xB7 ${skill.name} \u2190 ${skill.workspaceId} (${skill.path})`);
-  if (plan.collisions.length > 0) {
-    lines.push("");
-    lines.push(`${t("collisions")} (${plan.collisions.length})`);
-    for (const collision of plan.collisions) {
-      lines.push(`  ! ${collision.name}`);
-      lines.push(`      ${t("winner")}: ${collision.winner.workspaceId}`);
-      for (const shadowed of collision.shadowed) lines.push(`      ${t("shadowed")}: ${shadowed.workspaceId}`);
+  const { start, writeScope, metrics } = preflightOverview(plan, t);
+  const folders = new Map(plan.folders.map((folder) => [folder.workspaceId, folder]));
+  const lines = [
+    `${plan.projectTitle} \xB7 ${interpolate(t("memberCount"), { count: plan.memberCount })}`,
+    `${t("startFolder")} \xB7 ${start}`,
+    `${t("writeScope")} \xB7 ${writeScope}`,
+    metrics.join(" \xB7 ")
+  ];
+  if (!plan.skillCatalogConfirmed && plan.skills.length > 0) lines.push(t("skillCatalogUnconfirmed"));
+  for (const skill of plan.skills) {
+    const source = skill.unavailable ? t("skillUnavailable") : preflightSkillSource(skill, folders, t);
+    lines.push(`  ${skill.name} \xB7 ${source}${skill.path ? ` \xB7 ${skill.path}` : ""}`);
+    const collision = plan.collisions.find((entry) => entry.name === skill.name);
+    for (const alternative of collision?.shadowed ?? []) {
+      const label = t(plan.skillCatalogConfirmed && !skill.unavailable ? "shadowed" : "skillCandidate");
+      lines.push(`    ${label} ${preflightSkillSource(alternative, folders, t)} \xB7 ${alternative.path}`);
     }
   }
-  lines.push("");
-  lines.push(`${t("instructions")} (${plan.instructions.length})`);
-  for (const instruction of plan.instructions) lines.push(`  \xB7 ${instruction.workspaceId} \u2014 ${instruction.path} (${instruction.bytes} B)`);
-  if (plan.silent.length > 0) {
-    lines.push("");
-    lines.push(`${t("silentFolders")} (${plan.silent.length})`);
-    for (const entry of plan.silent) lines.push(`  \xB7 ${entry.workspaceId}: ${entry.detail}`);
+  if (plan.instructions.length > 0) lines.push("", t("projectRuleScope"));
+  for (const folder of plan.folders) {
+    lines.push("", `${folder.name ?? t("unknownFolder")} \xB7 ${preflightFolderAccess(folder, plan, t)} \xB7 ${folder.path ?? folder.workspaceId}`);
+    for (const file of plan.instructions.filter((entry) => entry.workspaceId === folder.workspaceId)) {
+      lines.push(`  ${file.path}`);
+    }
   }
   return lines.join("\n");
 }
@@ -2027,13 +2150,21 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
 function PreflightModal({ project, bridge, t, onClose }) {
   const [plan, setPlan] = React.useState(void 0);
   const [busy, setBusy] = React.useState(true);
-  const run = React.useCallback(async () => {
+  const [failure, setFailure] = React.useState(void 0);
+  const run = React.useCallback(async (refresh = false) => {
     setBusy(true);
+    setFailure(void 0);
     try {
-      const value = await bridge.preflight(project.id);
+      const value = await bridge.preflight(project.id, void 0, refresh);
+      if (!Array.isArray(value?.plan?.folders)) {
+        setPlan(void 0);
+        setFailure("preflightOlderHost");
+        return;
+      }
       setPlan(value.plan);
     } catch {
       setPlan(void 0);
+      setFailure("preflightFailed");
     } finally {
       setBusy(false);
     }
@@ -2045,11 +2176,11 @@ function PreflightModal({ project, bridge, t, onClose }) {
     open: true,
     onClose,
     title: t("preflight"),
-    description: project.title,
+    description: `${project.title} \xB7 ${interpolate(t("memberCount"), { count: plan?.memberCount ?? project.members?.length ?? 0 })}`,
     closeLabel: t("close"),
     // The wide card: a preflight lists skill paths and collision sources.
     className: "loom-editor"
-  }, h(PreflightPanel, { plan, t, busy, onRefresh: run }));
+  }, h(PreflightPanel, { plan, t, busy, failure, onRefresh: () => run(true) }));
 }
 function PanelSeatProbe({ usePanelInfo, onChange }) {
   const active = usePanelInfo((info) => (info?.activePanelId ?? null) !== null) === true;

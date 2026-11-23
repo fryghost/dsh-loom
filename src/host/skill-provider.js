@@ -85,7 +85,8 @@ async function listSkillFiles(rootPath, options = {}) {
   let entries;
   try {
     entries = await readdirImpl(rootPath, { withFileTypes: true });
-  } catch {
+  } catch (error) {
+    options.onReadError?.(error);
     return [];
   }
 

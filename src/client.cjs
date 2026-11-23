@@ -75,29 +75,48 @@ const dictionaries = {
     cancel: '取消',
     edit: '编辑',
     delete: '删除',
-    preflight: '上下文预检',
-    preflightHint: '在开始会话前，查看这个项目实际会加载什么。',
+    preflight: '新会话环境',
     running: '正在分析…',
-    skills: '技能',
-    noSkills: '没有技能',
-    collisions: '名称冲突',
-    collisionHint: '同名技能只会生效一个；下面是被遮蔽的来源。',
-    winner: '生效',
-    shadowed: '被遮蔽',
-    instructions: '指令文件',
-    noInstructions: '没有指令文件',
+    checkingEnvironment: '正在检查会话环境…',
+    preflightFailed: '检查失败，请重新检查。',
+    preflightOlderHost: '当前 DSH 正在使用旧版 Loom 服务。加载新版后可以查看会话环境。',
+    startFolder: '启动位置',
+    noStartFolder: '未设置启动文件夹',
     writeScope: '写入范围',
-    silentFolders: '未贡献的文件夹',
-    silentHint: '这些文件夹当前没有向会话提供任何内容。',
+    writeAll: '按默认权限，所有项目文件夹可写',
+    writeOneFolder: '按默认文件权限，仅「{name}」可写',
+    writeSelectedFolders: '按默认文件权限，{names}可写',
+    writeNone: '按默认权限，所有项目文件夹只读',
+    writeUnknown: '未能确认默认写入范围',
+    projectSkillCount: '项目技能 {count} 个',
+    discoveredSkillCount: '发现技能 {count} 个',
+    ruleFileCount: '发现规则文件 {count} 个',
+    skillConflictCount: '同名冲突 {count} 个',
+    folderDetails: '查看文件夹详情',
+    skillDetails: '查看项目技能',
+    folderSkillCount: '技能 {count} 个',
+    folderRuleCount: '规则 {count} 个',
+    projectRuleScope: 'DSH 按启动目录查找规则，其他成员的规则文件仅供查看。',
+    skillCatalogUnconfirmed: '已扫描项目文件夹，暂未确认会话可用的技能版本。',
+    skillUnavailable: '会话可用列表中未找到此技能',
+    folderProblems: '{count} 个文件夹需要检查',
+    unknownFolder: '未知文件夹',
+    folderUnresolved: '工作区找不到',
+    folderMissing: '文件夹不存在',
+    folderUnreadable: '部分内容检查失败',
+    winner: '使用',
+    shadowed: '被覆盖',
+    skillCandidate: '同名来源',
+    otherSkillSource: '项目以外的技能来源',
     from: '来自',
     role: '角色',
     writable: '可写',
     readonly: '只读',
     missing: '已失联',
     missingHint: '该文件夹当前无法解析；项目仍保留此成员。',
-    copyPlan: '复制预检结果',
+    copyPlan: '复制结果',
     copied: '已复制',
-    refresh: '重新分析',
+    refresh: '重新检查',
     needName: '请输入项目名称。',
     needFolder: '至少选择一个文件夹。',
     loadFailed: '读取项目失败：{message}',
@@ -107,7 +126,7 @@ const dictionaries = {
     memberCount: '{count} 个文件夹',
     subtitle: '把多个文件夹织成一个会话上下文。',
     emptyTitle: '还没有项目',
-    emptyHint: '新建一个项目，指向两个或更多文件夹。它们的技能、指令与上下文会一起进入同一个会话。',
+    emptyHint: '新建一个项目，共用多个文件夹提供的技能。',
     memberList: '参与的文件夹',
     defaultStart: '默认起点',
     folderPicker: '勾选参与的文件夹',
@@ -226,29 +245,48 @@ const dictionaries = {
     cancel: 'Cancel',
     edit: 'Edit',
     delete: 'Delete',
-    preflight: 'Context preflight',
-    preflightHint: 'See exactly what this project will load, before you start a session.',
+    preflight: 'New session environment',
     running: 'Analyzing…',
-    skills: 'Skills',
-    noSkills: 'No skills',
-    collisions: 'Name collisions',
-    collisionHint: 'Only one skill per name takes effect; the shadowed sources are listed below.',
-    winner: 'Active',
-    shadowed: 'Shadowed',
-    instructions: 'Instruction files',
-    noInstructions: 'No instruction files',
+    checkingEnvironment: 'Checking the session environment…',
+    preflightFailed: 'Could not check the session environment. Please retry.',
+    preflightOlderHost: 'DSH is running an older Loom service. Load the updated service to preview the session environment.',
+    startFolder: 'Starting folder',
+    noStartFolder: 'No starting folder set',
     writeScope: 'Write scope',
-    silentFolders: 'Folders contributing nothing',
-    silentHint: 'These folders currently provide nothing to the session.',
+    writeAll: 'Default permissions allow writing to all project folders',
+    writeOneFolder: 'Default file permissions allow writing only to “{name}”',
+    writeSelectedFolders: 'Default file permissions allow writing to {names}',
+    writeNone: 'All project folders are read-only under default permissions',
+    writeUnknown: 'Could not confirm default write access',
+    projectSkillCount: 'Project skills {count}',
+    discoveredSkillCount: 'Skills found {count}',
+    ruleFileCount: 'Rule files found {count}',
+    skillConflictCount: 'Name conflicts {count}',
+    folderDetails: 'View folder details',
+    skillDetails: 'View project skills',
+    folderSkillCount: 'Skills {count}',
+    folderRuleCount: 'Rules {count}',
+    projectRuleScope: 'DSH looks up rules from the starting folder. Rules found in sibling folders are shown for reference.',
+    skillCatalogUnconfirmed: 'Project folders were scanned. The skill versions available to the session are still unconfirmed.',
+    skillUnavailable: 'This skill did not appear in the session catalog',
+    folderProblems: '{count} folders need attention',
+    unknownFolder: 'Unknown folder',
+    folderUnresolved: 'Workspace unavailable',
+    folderMissing: 'Folder missing',
+    folderUnreadable: 'Some contents could not be checked',
+    winner: 'Using',
+    shadowed: 'Overridden',
+    skillCandidate: 'Same-name source',
+    otherSkillSource: 'Skill source outside this project',
     from: 'from',
     role: 'Role',
     writable: 'writable',
     readonly: 'read-only',
     missing: 'unresolved',
     missingHint: 'This folder cannot be resolved right now; the membership is kept.',
-    copyPlan: 'Copy preflight',
+    copyPlan: 'Copy results',
     copied: 'Copied',
-    refresh: 'Re-analyze',
+    refresh: 'Check again',
     needName: 'Enter a project name.',
     needFolder: 'Select at least one folder.',
     loadFailed: 'Could not load projects: {message}',
@@ -258,7 +296,7 @@ const dictionaries = {
     memberCount: '{count} folders',
     subtitle: 'Weave several folders into one session context.',
     emptyTitle: 'No projects yet',
-    emptyHint: 'Create a project and point it at two or more folders. Their skills, instructions, and context enter one session together.',
+    emptyHint: 'Create a project to use skills from several folders in one session.',
     memberList: 'Folders',
     defaultStart: 'Starting point',
     folderPicker: 'Select the folders',
@@ -390,28 +428,43 @@ const STYLES = `
 .loom-sidebar * { box-sizing: border-box; }
 
 .loom-preflight { display: flex; flex-direction: column; gap: 16px; }
-.loom-preflight-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
-.loom-boundary { color: var(--dsw-alias-label-secondary); font-size: 14px; line-height: 22px; }
-
-.loom-section { display: flex; flex-direction: column; gap: 6px; }
-.loom-section-title {
-  font-size: 12px; line-height: 20px; font-weight: 500;
-  display: flex; align-items: center; gap: 6px;
+.loom-preflight-overview {
+  display: grid; grid-template-columns: max-content minmax(0, 1fr);
+  column-gap: 16px; row-gap: 6px; margin: 0; padding: 12px 14px;
+  border: 1px solid var(--dsw-alias-border-l3); border-radius: 10px;
+  font-size: 14px; line-height: 22px;
 }
-.loom-section-title.loom-warn { color: var(--dsw-alias-state-warn-primary); }
-/* Preflight rows. Named distinctly because plain loom-row is ALSO the
-   sidebar's session row, and two rules sharing one name meant the later block
-   silently restyled the preflight into 32px session geometry. */
-.loom-preflight-row { display: flex; align-items: baseline; gap: 8px; font-size: 14px; line-height: 20px; }
-.loom-preflight-row + .loom-preflight-row { margin-top: 2px; }
-.loom-src {
+.loom-preflight-overview dt { color: var(--dsw-alias-label-secondary); }
+.loom-preflight-overview dd { margin: 0; overflow-wrap: anywhere; }
+.loom-preflight-summary {
+  display: flex; flex-wrap: wrap; column-gap: 14px; row-gap: 4px;
+  font-size: 13px; line-height: 20px;
+}
+.loom-preflight-details { border-top: 1px solid var(--dsw-alias-border-l3); }
+.loom-preflight-details + .loom-preflight-details { margin-top: -8px; }
+.loom-preflight-details > summary {
+  cursor: pointer; font-size: 14px; font-weight: 500; padding: 9px 2px;
+}
+.loom-preflight-details > summary:focus-visible {
+  outline: 2px solid currentColor; outline-offset: 2px; border-radius: 3px;
+}
+.loom-preflight-list { margin: 0; padding: 0; list-style: none; }
+.loom-preflight-item { padding: 9px 2px; }
+.loom-preflight-item + .loom-preflight-item { border-top: 1px solid var(--dsw-alias-border-l3); }
+.loom-preflight-row {
+  display: flex; align-items: baseline; gap: 4px 10px; flex-wrap: wrap;
+  font-size: 13px; line-height: 20px; overflow-wrap: anywhere;
+}
+.loom-preflight-row strong { font-weight: 500; min-width: 0; }
+.loom-preflight-counts { margin-inline-start: auto; }
+.loom-preflight-source {
   color: var(--dsw-alias-label-tertiary); font-size: 12px; line-height: 18px;
-  word-break: break-all;
+  overflow-wrap: anywhere;
 }
+.loom-preflight-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 8px; }
 .loom-muted { color: var(--dsw-alias-label-secondary); font-size: 12px; line-height: 20px; }
 .loom-warn { color: var(--dsw-alias-state-warn-primary); font-size: 12px; line-height: 20px; }
 
-.loom-results { display: flex; flex-direction: column; gap: 12px; }
 .loom-pre {
   white-space: pre-wrap;
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
@@ -900,7 +953,7 @@ function createBridge(ctx) {
   return {
     getManifest: () => call('getManifest'),
     putManifest: manifest => call('putManifest', { manifest }),
-    preflight: (projectId, activeWorkspaceId) => call('preflight', { projectId, activeWorkspaceId }),
+    preflight: (projectId, activeWorkspaceId, refresh) => call('preflight', { projectId, activeWorkspaceId, refresh }),
     planMigration: (sessionId, targetWorkspaceId) => call('planMigration', { sessionId, targetWorkspaceId }),
     migrateSession: (sessionId, targetWorkspaceId) => call('migrateSession', { sessionId, targetWorkspaceId }),
     searchSessions: (request, signal) => call('searchSessions', request, signal),
@@ -969,111 +1022,167 @@ function localTranslate(ctx) {
   };
 }
 
-/** The preflight panel: the reason this plugin exists. */
-function PreflightPanel({ plan, t, onRefresh, busy }) {
-  const [copied, setCopied] = React.useState(false);
+function preflightFolderStatus(folder, t) {
+  return t({
+    unresolved: 'folderUnresolved',
+    missing: 'folderMissing',
+    unreadable: 'folderUnreadable',
+  }[folder.status] ?? 'folderUnreadable');
+}
 
+function preflightOverview(plan, t) {
+  const active = plan.folders.find(folder => folder.workspaceId === plan.activeWorkspaceId);
+  const activeName = active?.name ?? t('unknownFolder');
+  const start = active === undefined ? t('noStartFolder')
+    : active.status === 'ready' ? activeName
+      : `${activeName} · ${preflightFolderStatus(active, t)}`;
+  const writeMode = plan.writeBoundary.writable;
+  let writeScope = t('writeUnknown');
+  if (writeMode === 'all-members') writeScope = t('writeAll');
+  if (writeMode === 'none') writeScope = t('writeNone');
+  const writableIds = plan.writeBoundary.writableWorkspaceIds ?? [];
+  const writableFolders = plan.folders.filter(folder => folder.status === 'ready' && writableIds.includes(folder.workspaceId));
+  if (writableFolders.length === 1) {
+    writeScope = interpolate(t('writeOneFolder'), { name: writableFolders[0].name ?? t('unknownFolder') });
+  } else if (writableFolders.length > 1) {
+    writeScope = interpolate(t('writeSelectedFolders'), {
+      names: writableFolders.map(folder => folder.name ?? t('unknownFolder')).join(' · '),
+    });
+  }
+
+  const discoveredOnly = plan.skills.length > 0
+    && (!plan.skillCatalogConfirmed || plan.skills.some(skill => skill.unavailable));
+  const metrics = [
+    interpolate(t(discoveredOnly ? 'discoveredSkillCount' : 'projectSkillCount'), { count: plan.skills.length }),
+    interpolate(t('ruleFileCount'), { count: plan.instructions.length }),
+  ];
+  if (plan.collisions.length > 0) {
+    metrics.push(interpolate(t('skillConflictCount'), { count: plan.collisions.length }));
+  }
+  return { start, writeScope, metrics };
+}
+
+function preflightFolderAccess(folder, plan, t) {
+  if (folder.status !== 'ready') return preflightFolderStatus(folder, t);
+  const mode = plan.writeBoundary.writable;
+  if (mode === 'unknown') return t('writeUnknown');
+  return mode === 'all-members' || plan.writeBoundary.writableWorkspaceIds?.includes(folder.workspaceId)
+    ? t('writable')
+    : t('readonly');
+}
+
+function preflightSkillSource(source, foldersById, t) {
+  return foldersById.get(source.workspaceId)?.name ?? t('otherSkillSource');
+}
+
+function PreflightPanel({ plan, t, onRefresh, busy, failure }) {
+  const [copied, setCopied] = React.useState(false);
   const copy = React.useCallback(async () => {
-    const text = renderPlanText(plan, t);
     try {
-      await navigator.clipboard.writeText(text);
+      await navigator.clipboard.writeText(renderPlanText(plan, t));
       setCopied(true);
       setTimeout(() => setCopied(false), 1500);
     } catch {
-      // Clipboard may be unavailable; the text is already visible on screen.
+      // The browser may block clipboard writes.
     }
   }, [plan, t]);
 
   if (plan === undefined) {
-    return h('div', { className: 'loom-preflight' },
-      h('div', { className: 'loom-muted' }, t('running')));
+    return h('div', { className: 'loom-preflight', 'aria-busy': busy },
+      failure
+        ? h('div', { className: 'loom-warn', role: 'alert' }, t(failure))
+        : h('div', { className: 'loom-muted', role: 'status' }, t('checkingEnvironment')),
+      failure && h('div', { className: 'loom-preflight-actions' },
+        h(Button, { variant: 'outline', size: 'sm', onClick: onRefresh }, t('refresh'))),
+    );
   }
 
-  return h('div', { className: 'loom-preflight' },
-    h('div', { className: 'loom-preflight-head' },
-      h('span', { className: 'loom-section-title' }, t('preflight')),
-      h(Button, { variant: 'ghost', size: 'sm', onClick: onRefresh, disabled: busy }, t('refresh')),
-    ),
+  const { start, writeScope, metrics } = preflightOverview(plan, t);
+  const foldersById = new Map(plan.folders.map(folder => [folder.workspaceId, folder]));
+  const collisionsByName = new Map(plan.collisions.map(collision => [collision.name, collision]));
+  const problemCount = plan.folders.filter(folder => folder.status !== 'ready').length;
 
-    // The write boundary is stated, not implied.
-    h('div', { className: 'loom-boundary' }, plan.writeBoundary.summary),
-
-    h('div', { className: 'loom-results' },
-      h('div', { className: 'loom-section' },
-        h('div', { className: 'loom-section-title' }, `${t('skills')} · ${plan.skills.length}`),
-        plan.skills.length === 0
-          ? h('div', { className: 'loom-muted' }, t('noSkills'))
-          : plan.skills.map(skill => h('div', { key: `${skill.workspaceId}:${skill.name}` },
-              h('div', { className: 'loom-preflight-row' }, h('span', null, skill.name)),
-              h('div', { className: 'loom-src' }, `${t('from')} ${skill.workspaceId} — ${skill.path}`),
-            )),
-      ),
-
-      // Collisions are surfaced, never hidden.
-      plan.collisions.length > 0 && h('div', { className: 'loom-section' },
-        h('div', { className: 'loom-section-title loom-warn' }, `${t('collisions')} · ${plan.collisions.length}`),
-        h('div', { className: 'loom-muted' }, t('collisionHint')),
-        plan.collisions.map(collision => h('div', { key: collision.name },
+  return h('div', { className: 'loom-preflight', 'aria-busy': busy },
+    h('dl', { className: 'loom-preflight-overview' },
+      h('dt', null, t('startFolder')), h('dd', null, start),
+      h('dt', null, t('writeScope')), h('dd', null, writeScope)),
+    h('div', { className: 'loom-preflight-summary' },
+      metrics.map(metric => h('span', { key: metric }, metric))),
+    problemCount > 0 && h('div', { className: 'loom-warn' },
+      interpolate(t('folderProblems'), { count: problemCount })),
+    plan.skills.length > 0 && h('details', { className: 'loom-preflight-details' },
+      h('summary', null, t('skillDetails')),
+      !plan.skillCatalogConfirmed && h('div', { className: 'loom-muted' }, t('skillCatalogUnconfirmed')),
+      h('ul', { className: 'loom-preflight-list' }, plan.skills.map(skill => {
+        const collision = collisionsByName.get(skill.name);
+        const source = preflightSkillSource(skill, foldersById, t);
+        const sourceLabel = skill.unavailable ? t('skillUnavailable')
+          : plan.skillCatalogConfirmed && collision ? `${t('winner')} ${source}` : source;
+        return h('li', { key: skill.name, className: 'loom-preflight-item' },
           h('div', { className: 'loom-preflight-row' },
-            h('span', null, collision.name),
-            h(Tag, { tone: 'success' }, `${t('winner')} ${collision.winner.workspaceId}`),
-          ),
-          collision.shadowed.map(shadowed => h('div', { key: shadowed.workspaceId, className: 'loom-preflight-row' },
-            h(Tag, { tone: 'warning' }, `${t('shadowed')} ${shadowed.workspaceId}`),
-          )),
-        )),
-      ),
-
-      h('div', { className: 'loom-section' },
-        h('div', { className: 'loom-section-title' }, `${t('instructions')} · ${plan.instructions.length}`),
-        plan.instructions.length === 0
-          ? h('div', { className: 'loom-muted' }, t('noInstructions'))
-          : plan.instructions.map(instruction => h('div', { key: instruction.path, className: 'loom-src' },
-              `${instruction.workspaceId} — ${instruction.path} (${instruction.bytes} B)`)),
-      ),
-
-      // The silent folders — the headline diagnostic.
-      plan.silent.length > 0 && h('div', { className: 'loom-section' },
-        h('div', { className: 'loom-section-title loom-warn' }, `${t('silentFolders')} · ${plan.silent.length}`),
-        h('div', { className: 'loom-muted' }, t('silentHint')),
-        plan.silent.map((entry, index) => h('div', { key: `${entry.workspaceId}-${index}` },
-          h('div', { className: 'loom-preflight-row' },
-            h(StateDot, { state: 'warning' }),
-            h('span', null, entry.workspaceId),
-          ),
-          h('div', { className: 'loom-src' }, entry.detail),
-        )),
-      ),
+            h('strong', null, skill.name), h('span', { className: 'loom-muted' }, sourceLabel)),
+          skill.path && h('div', { className: 'loom-preflight-source' }, skill.path),
+          collision?.shadowed.map(alternative => h('div', {
+            key: `${alternative.workspaceId}:${alternative.path}`,
+            className: 'loom-preflight-source',
+          },
+          `${t(plan.skillCatalogConfirmed && !skill.unavailable ? 'shadowed' : 'skillCandidate')} ${preflightSkillSource(alternative, foldersById, t)} · ${alternative.path}`)),
+        );
+      })),
     ),
-
-    h(Button, { variant: 'outline', size: 'sm', onClick: copy }, copied ? t('copied') : t('copyPlan')),
+    plan.folders.length > 0 && h('details', { className: 'loom-preflight-details' },
+      h('summary', null, t('folderDetails')),
+      plan.instructions.length > 0 && h('div', { className: 'loom-muted' }, t('projectRuleScope')),
+      h('ul', { className: 'loom-preflight-list' }, plan.folders.map(folder => {
+        const files = plan.instructions.filter(file => file.workspaceId === folder.workspaceId);
+        return h('li', { key: folder.workspaceId, className: 'loom-preflight-item' },
+          h('div', { className: 'loom-preflight-row' },
+            h('strong', null, folder.name ?? t('unknownFolder')),
+            folder.status === 'ready'
+              ? h(Tag, { tone: 'neutral' }, preflightFolderAccess(folder, plan, t))
+              : h('span', { className: 'loom-warn' }, preflightFolderAccess(folder, plan, t)),
+            folder.status !== 'unresolved' && folder.status !== 'missing' && h('span', {
+              className: 'loom-preflight-counts loom-muted',
+            }, `${interpolate(t('folderSkillCount'), { count: folder.skillCount })} · ${interpolate(t('folderRuleCount'), { count: folder.instructionCount })}`)),
+          folder.path && h('div', { className: 'loom-preflight-source' }, folder.path),
+          files.length > 0 && h('div', { className: 'loom-preflight-source' },
+            files.map(file => file.path.split(/[\\/]/).pop()).join(' · ')),
+        );
+      })),
+    ),
+    h('div', { className: 'loom-preflight-actions' },
+      h(Button, { variant: 'ghost', size: 'sm', onClick: copy }, copied ? t('copied') : t('copyPlan')),
+      h(Button, { variant: 'outline', size: 'sm', onClick: onRefresh, disabled: busy },
+        busy ? t('checkingEnvironment') : t('refresh'))),
   );
 }
 
-/** Plain-text rendering shared by the copy button and diagnostics. */
+/** Copy the displayed plan with full paths for troubleshooting. */
 function renderPlanText(plan, t) {
-  const lines = [];
-  lines.push(`${plan.projectTitle} — ${interpolate(t('memberCount'), { count: plan.memberCount })}`);
-  lines.push(`${t('writeScope')}: ${plan.writeBoundary.summary}`);
-  lines.push('');
-  lines.push(`${t('skills')} (${plan.skills.length})`);
-  for (const skill of plan.skills) lines.push(`  · ${skill.name} ← ${skill.workspaceId} (${skill.path})`);
-  if (plan.collisions.length > 0) {
-    lines.push('');
-    lines.push(`${t('collisions')} (${plan.collisions.length})`);
-    for (const collision of plan.collisions) {
-      lines.push(`  ! ${collision.name}`);
-      lines.push(`      ${t('winner')}: ${collision.winner.workspaceId}`);
-      for (const shadowed of collision.shadowed) lines.push(`      ${t('shadowed')}: ${shadowed.workspaceId}`);
+  const { start, writeScope, metrics } = preflightOverview(plan, t);
+  const folders = new Map(plan.folders.map(folder => [folder.workspaceId, folder]));
+  const lines = [
+    `${plan.projectTitle} · ${interpolate(t('memberCount'), { count: plan.memberCount })}`,
+    `${t('startFolder')} · ${start}`,
+    `${t('writeScope')} · ${writeScope}`,
+    metrics.join(' · '),
+  ];
+  if (!plan.skillCatalogConfirmed && plan.skills.length > 0) lines.push(t('skillCatalogUnconfirmed'));
+  for (const skill of plan.skills) {
+    const source = skill.unavailable ? t('skillUnavailable') : preflightSkillSource(skill, folders, t);
+    lines.push(`  ${skill.name} · ${source}${skill.path ? ` · ${skill.path}` : ''}`);
+    const collision = plan.collisions.find(entry => entry.name === skill.name);
+    for (const alternative of collision?.shadowed ?? []) {
+      const label = t(plan.skillCatalogConfirmed && !skill.unavailable ? 'shadowed' : 'skillCandidate');
+      lines.push(`    ${label} ${preflightSkillSource(alternative, folders, t)} · ${alternative.path}`);
     }
   }
-  lines.push('');
-  lines.push(`${t('instructions')} (${plan.instructions.length})`);
-  for (const instruction of plan.instructions) lines.push(`  · ${instruction.workspaceId} — ${instruction.path} (${instruction.bytes} B)`);
-  if (plan.silent.length > 0) {
-    lines.push('');
-    lines.push(`${t('silentFolders')} (${plan.silent.length})`);
-    for (const entry of plan.silent) lines.push(`  · ${entry.workspaceId}: ${entry.detail}`);
+  if (plan.instructions.length > 0) lines.push('', t('projectRuleScope'));
+  for (const folder of plan.folders) {
+    lines.push('', `${folder.name ?? t('unknownFolder')} · ${preflightFolderAccess(folder, plan, t)} · ${folder.path ?? folder.workspaceId}`);
+    for (const file of plan.instructions.filter(entry => entry.workspaceId === folder.workspaceId)) {
+      lines.push(`  ${file.path}`);
+    }
   }
   return lines.join('\n');
 }
@@ -1449,16 +1558,22 @@ function LoomGroup({ row, actions, menu, isCollapsed, isExpanded, onToggleCollap
 function PreflightModal({ project, bridge, t, onClose }) {
   const [plan, setPlan] = React.useState(undefined);
   const [busy, setBusy] = React.useState(true);
+  const [failure, setFailure] = React.useState(undefined);
 
-  const run = React.useCallback(async () => {
+  const run = React.useCallback(async (refresh = false) => {
     setBusy(true);
+    setFailure(undefined);
     try {
-      const value = await bridge.preflight(project.id);
+      const value = await bridge.preflight(project.id, undefined, refresh);
+      if (!Array.isArray(value?.plan?.folders)) {
+        setPlan(undefined);
+        setFailure('preflightOlderHost');
+        return;
+      }
       setPlan(value.plan);
     } catch {
-      // A failed preflight leaves the running state; the dialog stays open so
-      // the reason is not lost behind a closed window.
       setPlan(undefined);
+      setFailure('preflightFailed');
     } finally {
       setBusy(false);
     }
@@ -1470,11 +1585,11 @@ function PreflightModal({ project, bridge, t, onClose }) {
     open: true,
     onClose,
     title: t('preflight'),
-    description: project.title,
+    description: `${project.title} · ${interpolate(t('memberCount'), { count: plan?.memberCount ?? project.members?.length ?? 0 })}`,
     closeLabel: t('close'),
     // The wide card: a preflight lists skill paths and collision sources.
     className: 'loom-editor',
-  }, h(PreflightPanel, { plan, t, busy, onRefresh: run }));
+  }, h(PreflightPanel, { plan, t, busy, failure, onRefresh: () => run(true) }));
 }
 
 /**

@@ -17,10 +17,10 @@
 import { randomUUID } from 'node:crypto';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { appendFile, mkdir, readdir, readFile, stat } from 'node:fs/promises';
+import { appendFile, lstat, mkdir, readFile, realpath, stat } from 'node:fs/promises';
 
 import { loadManifest, saveManifest } from './host/manifest-store.js';
-import { createSkillProvider } from './host/skill-provider.js';
+import { createSkillProvider, listSkillFiles } from './host/skill-provider.js';
 import skillRootsCore from './core/skill-roots.cjs';
 import contextPlanCore from './core/context-plan.cjs';
 import frontmatterCore from './core/frontmatter.cjs';
@@ -35,7 +35,7 @@ const { buildContextPlan } = contextPlanCore;
 const { parseSkillMetadata } = frontmatterCore;
 const { BRIDGE_CHANNEL, BRIDGE_ENDPOINTS, bridgeEndpoint, bridgePath } = bridgeCore;
 const { buildMigrationPlan } = migrationCore;
-const { normalizeComparablePath } = manifestCore;
+const { normalizeComparablePath, projectStartWorkspaceId } = manifestCore;
 
 const name = 'dsh-loom';
 const inject = ['connection'];
@@ -53,21 +53,51 @@ function resolveDshHome(explicit) {
  * rather than filled with a guess, so the context plan can report them as
  * gaps instead of inventing a path.
  */
-async function resolvePaths(ctx, workspaceIds) {
+function resolveWorkspaces(ctx, workspaceIds) {
   const registry = ctx.get('workspaceRegistry');
-  const paths = {};
-  if (registry === undefined) return paths;
+  const workspaces = new Map();
+  if (registry === undefined) return workspaces;
   for (const workspaceId of workspaceIds) {
     try {
       const workspace = registry.get(workspaceId);
       if (workspace !== undefined && typeof workspace.path === 'string') {
-        paths[workspaceId] = workspace.path;
+        workspaces.set(workspaceId, workspace);
       }
     } catch {
       // An unresolvable workspace stays absent; the plan reports it.
     }
   }
-  return paths;
+  return workspaces;
+}
+
+async function resolvePaths(ctx, workspaceIds) {
+  return Object.fromEntries([...resolveWorkspaces(ctx, workspaceIds)]
+    .map(([id, workspace]) => [id, workspace.path]));
+}
+
+function isMissingPath(error) {
+  return error?.code === 'ENOENT' || error?.code === 'ENOTDIR';
+}
+
+async function workspaceFolderStatus(path) {
+  try {
+    return (await stat(path)).isDirectory() ? 'ready' : 'missing';
+  } catch (error) {
+    return isMissingPath(error) ? 'missing' : 'unreadable';
+  }
+}
+
+async function configuredWritableFolders(sandboxPolicy) {
+  const roots = sandboxPolicy?.additionalWritableRoots ?? [];
+  const checked = await Promise.all(roots.map(async root => {
+    try {
+      if ((await lstat(root)).isDirectory()) return await realpath(root);
+    } catch {
+      // The file sandbox also omits unusable configured roots.
+    }
+    return undefined;
+  }));
+  return checked.filter(root => root !== undefined);
 }
 
 /** Gather on-disk skill inventories for every root of a project. */
@@ -75,42 +105,22 @@ async function gatherSkills(roots) {
   const skillsByRoot = {};
   const rootStates = {};
   for (const root of roots) {
-    try {
-      const info = await stat(root.path);
-      if (!info.isDirectory()) {
-        rootStates[root.path] = { exists: false };
-        continue;
-      }
-    } catch {
-      rootStates[root.path] = { exists: false };
-      continue;
-    }
     rootStates[root.path] = { exists: true };
-
     const found = [];
-    let entries;
-    try {
-      entries = await readdir(root.path, { withFileTypes: true });
-    } catch (error) {
-      rootStates[root.path] = { exists: true, readError: String(error?.message ?? error) };
-      skillsByRoot[root.path] = [];
-      continue;
-    }
-
-    for (const entry of entries) {
-      if (entry.name === '.system') continue;
-      const candidatePath = entry.isDirectory()
-        ? join(root.path, entry.name, 'SKILL.md')
-        : entry.isFile() && entry.name.endsWith('.md')
-          ? join(root.path, entry.name)
-          : undefined;
-      if (candidatePath === undefined) continue;
+    const recordReadError = error => {
+      if (!isMissingPath(error)) rootStates[root.path].readError = true;
+    };
+    const files = await listSkillFiles(root.path, { onReadError: error => {
+      if (isMissingPath(error)) rootStates[root.path].exists = false;
+      else recordReadError(error);
+    } });
+    for (const file of files) {
       try {
-        const raw = await readFile(candidatePath, { encoding: 'utf8' });
+        const raw = await readFile(file.path, { encoding: 'utf8' });
         const parsed = parseSkillMetadata(raw);
-        if (parsed !== undefined) found.push({ ...parsed, path: candidatePath });
-      } catch {
-        // A single unreadable skill file never fails the inventory.
+        if (parsed !== undefined) found.push({ ...parsed, path: file.path });
+      } catch (error) {
+        recordReadError(error);
       }
     }
     skillsByRoot[root.path] = found;
@@ -129,20 +139,22 @@ async function gatherInstructions(candidates) {
         continue;
       }
       let excerpt;
+      let readError;
       try {
         const raw = await readFile(candidate.path, { encoding: 'utf8' });
         excerpt = raw.slice(0, 400);
       } catch {
-        excerpt = undefined;
+        readError = true;
       }
       instructions.push({
         ...candidate,
         exists: true,
         bytes: info.size,
+        ...readError === undefined ? {} : { readError },
         ...excerpt === undefined ? {} : { excerpt },
       });
-    } catch {
-      instructions.push({ ...candidate, exists: false, bytes: 0 });
+    } catch (error) {
+      instructions.push({ ...candidate, exists: false, bytes: 0, readError: !isMissingPath(error) });
     }
   }
   return instructions;
@@ -336,7 +348,7 @@ async function migrateSessionWith(ctx, sessionId, targetWorkspaceId) {
   };
 }
 
-function createRpcHandler(ctx, dshHome) {
+function createRpcHandler(ctx, dshHome, invalidateSkillCatalog = () => {}) {
   const searchCache = createSessionSearchCache();
   const readManifestFromDisk = async () => {
     const loaded = await loadManifest(dshHome);
@@ -413,24 +425,53 @@ function createRpcHandler(ctx, dshHome) {
             };
           }
 
-          const pathsByWorkspaceId = await resolvePaths(
-            ctx,
-            project.members.map(member => member.workspaceId),
-          );
+          const workspaces = resolveWorkspaces(ctx, project.members.map(member => member.workspaceId));
+          const pathsByWorkspaceId = Object.fromEntries([...workspaces].map(([id, workspace]) => [id, workspace.path]));
+          const namesByWorkspaceId = Object.fromEntries([...workspaces].map(([id, workspace]) => [id, workspace.title]));
+          const requestedStart = payload?.activeWorkspaceId;
+          const activeWorkspaceId = project.members.some(member => member.workspaceId === requestedStart)
+            ? requestedStart
+            : projectStartWorkspaceId(project);
           const { roots } = skillRootsForProject(project, pathsByWorkspaceId);
           const { candidates } = instructionCandidatesForProject(project, pathsByWorkspaceId);
-          const { skillsByRoot, rootStates } = await gatherSkills(roots);
-          const instructions = await gatherInstructions(candidates);
+          const [{ skillsByRoot, rootStates }, instructions, folderStatuses] = await Promise.all([
+            gatherSkills(roots),
+            gatherInstructions(candidates),
+            Promise.all([...workspaces].map(async ([id, workspace]) => [id, await workspaceFolderStatus(workspace.path)])),
+          ]);
+          const statusesByWorkspaceId = Object.fromEntries(folderStatuses);
+          const skills = ctx.get('skills');
+          if (payload?.refresh === true) invalidateSkillCatalog();
+          // The new session does not have an agent scope yet. Preview the same
+          // registry catalogue at its starting directory, including native providers.
+          let effectiveSkills;
+          if (statusesByWorkspaceId[activeWorkspaceId] === 'ready'
+            && Object.values(skillsByRoot).some(entries => entries.length > 0)) {
+            const lookup = { cwd: pathsByWorkspaceId[activeWorkspaceId], signal };
+            if (typeof skills?.snapshot === 'function') {
+              const snapshot = await skills.snapshot(lookup);
+              if (snapshot.complete) effectiveSkills = snapshot.skills;
+            } else if (typeof skills?.list === 'function') {
+              effectiveSkills = await skills.list(lookup);
+            }
+          }
 
-          const sandboxMode = ctx.get('sandboxPolicy')?.defaultMode ?? payload?.sandboxMode ?? 'workspace-write';
+          const sandboxPolicy = ctx.get('sandboxPolicy');
+          const sandboxMode = sandboxPolicy?.defaultMode ?? payload?.sandboxMode ?? 'unknown';
           const plan = buildContextPlan({
             project,
             pathsByWorkspaceId,
+            namesByWorkspaceId,
+            statusesByWorkspaceId,
             skillsByRoot,
             rootStates,
             instructions,
+            effectiveSkills,
             sandboxMode,
-            activeWorkspaceId: payload?.activeWorkspaceId ?? project.defaultWorkspaceId,
+            additionalWritableRoots: sandboxMode === 'workspace-write'
+              ? await configuredWritableFolders(sandboxPolicy)
+              : [],
+            activeWorkspaceId,
           });
           return { ok: true, value: { plan } };
         }
@@ -603,7 +644,8 @@ function apply(ctx, config = {}) {
       + 'ctx.connection.fetch.register is not available in this composition',
     );
   }
-  const handler = createRpcHandler(ctx, dshHome);
+  let invalidateSkillCatalog;
+  const handler = createRpcHandler(ctx, dshHome, () => invalidateSkillCatalog?.());
   for (const endpoint of BRIDGE_ENDPOINTS) {
     connection.fetch.register({
       path: bridgePath(endpoint),
@@ -616,12 +658,11 @@ function apply(ctx, config = {}) {
   // Register the sibling-folder skill provider. `inject` keeps Loom loadable
   // when no skills registry exists in this composition.
   ctx.inject(['skills'], (scope) => {
-    const dispose = scope.skills.registerProvider(() => createSkillProvider({
+    const provider = createSkillProvider({
       getProjectsForPath: async (cwd) => {
         const loaded = await loadManifest(dshHome);
         // Match on resolved member paths so a session whose cwd is any member
         // folder (or a subdirectory of one) sees the whole project.
-        const registry = ctx.get('workspaceRegistry');
         const matched = [];
         for (const project of loaded.manifest.projects) {
           const pathsByWorkspaceId = await resolvePaths(ctx, project.members.map(member => member.workspaceId));
@@ -632,7 +673,11 @@ function apply(ctx, config = {}) {
         return { projects: matched };
       },
       readText: async path => await readFile(path, { encoding: 'utf8' }),
-    }));
+    });
+    const dispose = scope.skills.registerProvider(control => {
+      invalidateSkillCatalog = control?.invalidate;
+      return provider;
+    });
     scope.effect(() => dispose, 'dsh-loom skill provider');
   });
 }

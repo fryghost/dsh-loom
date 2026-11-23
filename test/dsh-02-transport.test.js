@@ -31,6 +31,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -67,6 +68,8 @@ function resolveFromAnchors(name) {
 
 const cordisPath = resolveFromAnchors('@deepseek-ai/cordis');
 const connectionPath = resolveFromAnchors('@deepseek-ai/dsh-client-connection');
+const skillsPath = resolveFromAnchors('@deepseek-ai/dsh-skill');
+const filesystemSkillsPath = resolveFromAnchors('@deepseek-ai/dsh-skill-filesystem');
 const available = cordisPath !== undefined && connectionPath !== undefined;
 
 /**
@@ -162,9 +165,9 @@ test('a sibling plugin cannot mount a private RPC channel on this DSH build', as
 /**
  * The carrier's BROWSER transport, installed the way the page installs it.
  *
- * `lib/client.js` is a `__ModuleLoader__` bundle with no ESM exports, so it is
- * imported against a stub loader and its factory is called directly; the factory
- * needs no platform module. Driving the real caller is the entire point: this
+ * The Node entry exports the same installer. Older DSH releases only expose
+ * a `__ModuleLoader__` bundle, whose factory needs no platform module.
+ * Driving the real caller is the entire point: this
  * test used to hand-write the `client-request` envelope, put the bare endpoint
  * name in `method`, and so agreed with a server that compared against the bare
  * name — while the real caller copies the full `dsh-loom/getManifest` into it.
@@ -174,30 +177,31 @@ test('a sibling plugin cannot mount a private RPC channel on this DSH build', as
  * @param origin - the page origin the browser would resolve relative routes on.
  * @returns the RPC caller the page's `ctx.connection` exposes.
  */
-async function loadBrowserRpc(shared, origin) {
+let browserRegistration;
+async function loadBrowserRpc(shared, origin, peer) {
   const clientPath = resolveFromAnchors('@deepseek-ai/dsh-client-connection/client');
   assert.ok(clientPath !== undefined, 'the carrier client build must be resolvable');
 
-  let registration;
   const previousWindow = globalThis.window;
-  globalThis.window = { __ModuleLoader__: { load: value => { registration = value; } } };
+  globalThis.window = { __ModuleLoader__: { load: value => { browserRegistration = value; } } };
+  let module;
   try {
-    await import(pathToFileURL(clientPath).href);
+    module = await import(pathToFileURL(clientPath).href);
   } finally {
     if (previousWindow === undefined) delete globalThis.window;
     else globalThis.window = previousWindow;
   }
-  assert.ok(registration !== undefined, 'the carrier client bundle must register itself');
-
-  const client = registration.factory(spec => {
-    throw new Error(`the connection client bundle must not need platform module ${String(spec)}`);
-  });
+  const client = typeof module.installConnection === 'function' ? module
+    : browserRegistration?.factory(spec => {
+      throw new Error(`the connection client bundle must not need platform module ${String(spec)}`);
+    });
+  assert.equal(typeof client?.installConnection, 'function', 'the carrier client must expose its installer');
   const ctx = { provide: (name, value) => { ctx[name] = value; } };
   client.installConnection(ctx, {
     transport: {
       // The page posts the document-relative route and the carrier resolves it
       // against its own base: same join, same URL as the browser.
-      fetch: async (route, init) => await shared.fetch(new Request(new URL(route, origin), init)),
+      fetch: async (route, init) => await shared.fetch(new Request(new URL(route, origin), init), peer),
     },
     location: new URL(origin),
   });
@@ -217,6 +221,7 @@ test('Loom answers the browser transport through the real shared Fetch handler',
     // channel of its own.
     const connection = root.get('connection');
     const shared = connection.createSharedFetchHandler('/api');
+    const peer = connection.createPeer?.({ principal: { kind: 'owner' } });
 
     // The carrier resolves how to present a body by looking the exact pathname
     // up in the same registry; a path that did not match exactly would never
@@ -232,7 +237,7 @@ test('Loom answers the browser transport through the real shared Fetch handler',
     // The envelope is built by the CARRIER'S OWN BROWSER TRANSPORT, not by this
     // test, and the response is parsed by it too — so whatever the page puts on
     // the wire is what the host must accept.
-    const rpc = await loadBrowserRpc(shared, 'http://127.0.0.1:3080/');
+    const rpc = await loadBrowserRpc(shared, 'http://127.0.0.1:3080/', peer);
 
     // `putManifest` runs before `preflight` because the preflight reads the
     // manifest back from disk; this is the client's own order too.
@@ -251,6 +256,7 @@ test('Loom answers the browser transport through the real shared Fetch handler',
       report: { event: 'probe' },
       planMigration: { sessionId: 'session-probe', targetWorkspaceId: 'ws-probe' },
       migrateSession: { sessionId: 'session-probe', targetWorkspaceId: 'ws-probe' },
+      searchSessions: { text: 'probe', scope: 'all' },
     };
     for (const endpoint of BRIDGE_ENDPOINTS) {
       assert.ok(endpoint in payloads, `${endpoint} needs a payload here, or the loop below calls it blind`);
@@ -261,6 +267,11 @@ test('Loom answers the browser transport through the real shared Fetch handler',
           `${endpoint} must name the missing capability instead of failing opaquely`);
         assert.ok(typeof result.error.message === 'string' && result.error.message.length > 0,
           'a degraded answer still has to say what is missing');
+        continue;
+      }
+      if (endpoint === 'searchSessions') {
+        assert.equal(result.ok, false);
+        assert.match(result.error.message, /session history service is unavailable/);
         continue;
       }
       assert.equal(result.ok, true, `${endpoint} must resolve: ${JSON.stringify(result)}`);
@@ -279,6 +290,77 @@ test('Loom answers the browser transport through the real shared Fetch handler',
       body: JSON.stringify({ type: 'client-request', rpcId: 'x', method: 'nope', payload: {} }),
     }));
     assert.equal(stray.status, 404);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test('preflight shows the skill version chosen by DSH at the project start folder', async t => {
+  if (!available || skillsPath === undefined || filesystemSkillsPath === undefined) {
+    return t.skip('DSH transport or real skill providers unavailable');
+  }
+  const { root } = await mountRealConnection();
+  const home = mkdtempSync(join(tmpdir(), 'loom-real-skills-'));
+  try {
+    const alpha = join(home, 'alpha');
+    const beta = join(home, 'beta');
+    for (const [folder, name, body] of [
+      [alpha, 'shared-skill', 'Version from Alpha'],
+      [beta, 'shared-skill', 'Version from Beta'],
+      [alpha, 'alpha-only', 'Skill from the sibling workspace'],
+    ]) {
+      const directory = join(folder, '.dsh', 'skills', name);
+      await mkdir(directory, { recursive: true });
+      await writeFile(join(directory, 'SKILL.md'),
+        `---\nname: ${name}\ndescription: ${body}\n---\n${body}\n`, 'utf8');
+    }
+    await mkdir(join(beta, '.git'));
+    const workspaces = new Map([
+      ['a', { path: alpha, title: 'Alpha' }],
+      ['b', { path: beta, title: 'Beta' }],
+    ]);
+    root.provide('workspaceRegistry', { get: id => workspaces.get(id) });
+    const { SkillRegistry } = await import(pathToFileURL(skillsPath).href);
+    await root.plugin(SkillRegistry).await();
+    const filesystemSkills = await import(pathToFileURL(filesystemSkillsPath).href);
+    await root.plugin({ inject: filesystemSkills.inject, apply: filesystemSkills.apply }, {
+      dshHome: home, agentsHome: home, watch: false,
+    }).await();
+    await (await mountLoom(root, home)).await();
+    const connection = root.get('connection');
+    const shared = connection.createSharedFetchHandler('/api');
+    const peer = connection.createPeer?.({ principal: { kind: 'owner' } });
+    const rpc = await loadBrowserRpc(shared, 'http://127.0.0.1:3080/', peer);
+    const saved = await rpc.call(BRIDGE_CHANNEL, bridgeEndpoint('putManifest'), {
+      manifest: { schemaVersion: 2, projects: [
+        { id: 'p', title: 'Skills', members: ['a', 'b'], defaultWorkspaceId: 'b' },
+      ] },
+    });
+    assert.equal(saved.ok, true);
+
+    const result = await rpc.call(BRIDGE_CHANNEL, bridgeEndpoint('preflight'), { projectId: 'p' });
+    assert.equal(result.ok, true, JSON.stringify(result));
+    const { plan } = result.value;
+    assert.equal(plan.skillCatalogConfirmed, true);
+    assert.equal(plan.activeWorkspaceId, 'b');
+    assert.equal(plan.collisions.length, 1);
+    const actualSkill = await root.get('skills').get('shared-skill', { cwd: beta });
+    assert.equal(actualSkill.content.trim(), 'Version from Beta');
+    assert.equal(plan.collisions[0].winner.workspaceId, 'b');
+    assert.equal(plan.collisions[0].winner.path, actualSkill.path);
+    assert.deepEqual(plan.collisions[0].shadowed.map(skill => skill.workspaceId), ['a']);
+    assert.equal(plan.skills.find(skill => skill.name === 'alpha-only').workspaceId, 'a');
+
+    await writeFile(join(alpha, '.dsh', 'skills', 'alpha-only', 'SKILL.md'),
+      '---\nname: alpha-renamed\ndescription: Renamed in the sibling workspace\n---\nUpdated body.\n', 'utf8');
+    const refreshed = await rpc.call(BRIDGE_CHANNEL, bridgeEndpoint('preflight'), {
+      projectId: 'p', refresh: true,
+    });
+    assert.equal(refreshed.ok, true, JSON.stringify(refreshed));
+    assert.deepEqual(refreshed.value.plan.skills.map(skill => [skill.name, skill.unavailable]).sort(), [
+      ['alpha-renamed', false], ['shared-skill', false],
+    ]);
+    assert.equal(await root.get('skills').get('alpha-only', { cwd: beta }), undefined);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

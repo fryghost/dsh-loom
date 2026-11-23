@@ -19,6 +19,8 @@
  * from the grouping surfaces" gesture, and the shell owns restoring them.
  */
 
+const { projectStartWorkspaceId } = require('./manifest.cjs');
+
 /**
  * Whether a session belongs in a browsing list at all.
  *
@@ -275,8 +277,7 @@ function deriveSections({ projects, snapshot, sessionState, panelActive = false 
     folders: (project.members || []).length,
     // Where the row's New chat starts. A declared starting folder only picks a
     // starting point; membership never privileges one folder during discovery.
-    startWorkspaceId: project.defaultWorkspaceId
-      || (project.members && project.members[0] && project.members[0].workspaceId),
+    startWorkspaceId: projectStartWorkspaceId(project),
     sessions: collect((project.members || [])
       .flatMap(member => {
         const workspace = workspaceById.get(member.workspaceId);

@@ -21,7 +21,7 @@
  * without touching a disk.
  */
 
-const { normalizePath, resolveSkillCollisions } = require('./skill-roots.cjs');
+const { normalizePath, resolveSkillCollisions, skillRootsForProject } = require('./skill-roots.cjs');
 
 /** Severity levels a plan entry can carry. */
 const LEVEL_INFO = 'info';
@@ -43,6 +43,51 @@ const REASON = {
   NO_INSTRUCTIONS: 'no-instruction-files',
   EMPTY_SKILLS: 'skill-directories-empty',
 };
+
+function comparablePath(path) {
+  const normalized = normalizePath(path);
+  return /^(?:[a-z]:|\/\/)/i.test(normalized) ? normalized.toLowerCase() : normalized;
+}
+
+/** Reconcile the current project's sources with the registry's winning versions. */
+function planSkills(candidates, effectiveSkills) {
+  const { winners, collisions } = resolveSkillCollisions(candidates);
+  const alternativesByName = new Map(collisions.map(entry => [entry.name, entry.shadowed]));
+  const effectiveByName = effectiveSkills === undefined
+    ? undefined
+    : new Map(effectiveSkills.map(skill => [skill.name, skill]));
+  const skills = [];
+  const conflicts = [];
+  for (const localWinner of winners) {
+    const localSources = [localWinner, ...(alternativesByName.get(localWinner.name) ?? [])];
+    const effective = effectiveByName?.get(localWinner.name);
+    const matchingSource = effective?.path === undefined ? undefined : localSources.find(source =>
+      comparablePath(source.path) === comparablePath(effective.path));
+    const winner = effectiveByName === undefined ? localWinner
+      : effective === undefined ? undefined
+        : { ...effective, workspaceId: matchingSource?.workspaceId };
+    const shown = winner ?? localWinner;
+    skills.push({
+      name: shown.name,
+      description: shown.description,
+      ...shown.whenToUse === undefined ? {} : { whenToUse: shown.whenToUse },
+      workspaceId: shown.workspaceId,
+      path: shown.path,
+      source: shown.source,
+      unavailable: winner === undefined,
+    });
+    const shadowed = localSources.filter(source => shown.path === undefined
+      || comparablePath(source.path) !== comparablePath(shown.path));
+    if (shadowed.length > 0) {
+      conflicts.push({
+        name: shown.name,
+        winner: { workspaceId: shown.workspaceId, path: shown.path, source: shown.source },
+        shadowed: shadowed.map(source => ({ workspaceId: source.workspaceId, path: source.path })),
+      });
+    }
+  }
+  return { skills, collisions: conflicts };
+}
 
 /**
  * Describe the write boundary for a sandbox mode.
@@ -86,6 +131,12 @@ function describeWriteBoundary(mode, activeWorkspaceId) {
   }
 }
 
+function folderIsWithin(path, root) {
+  const candidate = comparablePath(path);
+  const parent = comparablePath(root);
+  return candidate === parent || candidate.startsWith(`${parent}/`);
+}
+
 /**
  * Build a context plan.
  *
@@ -104,10 +155,14 @@ function describeWriteBoundary(mode, activeWorkspaceId) {
 function buildContextPlan(input = {}) {
   const project = input.project ?? { id: '', title: '', members: [] };
   const paths = input.pathsByWorkspaceId ?? {};
+  const names = input.namesByWorkspaceId ?? {};
+  const statuses = input.statusesByWorkspaceId ?? {};
   const skillsByRoot = input.skillsByRoot ?? {};
   const rootStates = input.rootStates ?? {};
   const instructions = input.instructions ?? [];
   const members = project.members ?? [];
+  const { roots } = skillRootsForProject(project, paths);
+  const folders = [];
 
   const memberIndexById = new Map(members.map((member, index) => [member.workspaceId, index]));
   const roleById = new Map(members.map(member => [member.workspaceId, member.role ?? 'writable']));
@@ -119,6 +174,17 @@ function buildContextPlan(input = {}) {
 
   for (const member of members) {
     const base = paths[member.workspaceId];
+    const folder = {
+      workspaceId: member.workspaceId,
+      name: typeof names[member.workspaceId] === 'string' && names[member.workspaceId].length > 0
+        ? names[member.workspaceId]
+        : normalizePath(base).split('/').pop() || base,
+      path: base,
+      status: statuses[member.workspaceId] ?? (base ? 'ready' : 'unresolved'),
+      skillCount: 0,
+      instructionCount: 0,
+    };
+    folders.push(folder);
     if (typeof base !== 'string' || base.length === 0) {
       silent.push({
         workspaceId: member.workspaceId,
@@ -129,17 +195,10 @@ function buildContextPlan(input = {}) {
       continue;
     }
 
-    // Roots are matched to their owning member by normalized prefix, because
-    // a Windows realpath base and a forward-slash root must compare equal.
-    const normalizedBase = normalizePath(base);
-    const memberRoots = Object.keys(skillsByRoot).filter((root) => {
-      const normalizedRoot = normalizePath(root);
-      return normalizedRoot === normalizedBase || normalizedRoot.startsWith(`${normalizedBase}/`);
-    });
-
-    let memberSkillCount = 0;
+    const memberRoots = roots.filter(root => root.workspaceId === member.workspaceId).map(root => root.path);
     for (const root of memberRoots) {
       const state = rootStates[root];
+      if (state?.readError && folder.status === 'ready') folder.status = 'unreadable';
       if (state !== undefined && state.exists === false) {
         // A skill directory that does not exist is normal, not a defect: most
         // folders have none. Only surface it when the folder was expected to
@@ -147,7 +206,7 @@ function buildContextPlan(input = {}) {
         continue;
       }
       for (const skill of skillsByRoot[root] ?? []) {
-        memberSkillCount += 1;
+        folder.skillCount += 1;
         contributing.add(member.workspaceId);
         skillCandidates.push({
           name: skill.name,
@@ -162,7 +221,7 @@ function buildContextPlan(input = {}) {
       }
     }
 
-    if (memberRoots.length === 0 || memberSkillCount === 0) {
+    if (folder.skillCount === 0) {
       silent.push({
         workspaceId: member.workspaceId,
         reason: REASON.NO_SKILL_DIRS,
@@ -172,7 +231,7 @@ function buildContextPlan(input = {}) {
     }
   }
 
-  const { winners, collisions } = resolveSkillCollisions(skillCandidates);
+  const { skills, collisions } = planSkills(skillCandidates, input.effectiveSkills);
 
   // ---- instructions -------------------------------------------------------
   const loadedInstructions = instructions
@@ -186,11 +245,14 @@ function buildContextPlan(input = {}) {
 
   const instructionTotalBytes = loadedInstructions.reduce((sum, entry) => sum + entry.bytes, 0);
   const instructionOwners = new Set(loadedInstructions.map(entry => entry.workspaceId));
-  for (const member of members) {
-    if (typeof paths[member.workspaceId] !== 'string') continue;
-    if (!instructionOwners.has(member.workspaceId)) {
+  for (const folder of folders) {
+    folder.instructionCount = loadedInstructions.filter(entry => entry.workspaceId === folder.workspaceId).length;
+    if (folder.status === 'ready' && instructions.some(entry => entry.workspaceId === folder.workspaceId && entry.readError)) {
+      folder.status = 'unreadable';
+    }
+    if (folder.path !== undefined && folder.instructionCount === 0) {
       silent.push({
-        workspaceId: member.workspaceId,
+        workspaceId: folder.workspaceId,
         reason: REASON.NO_INSTRUCTIONS,
         level: LEVEL_INFO,
         detail: '该文件夹没有 AGENTS.md / CLAUDE.md，因此不贡献指令。',
@@ -206,30 +268,33 @@ function buildContextPlan(input = {}) {
 
   const nonContributing = members.filter(member => !contributingMembers.has(member.workspaceId));
   const writeBoundary = describeWriteBoundary(input.sandboxMode, input.activeWorkspaceId);
+  if (writeBoundary.writable === 'active-member-only') {
+    const roots = [paths[input.activeWorkspaceId], ...(input.additionalWritableRoots ?? [])]
+      .filter(root => typeof root === 'string' && root.length > 0);
+    writeBoundary.writableWorkspaceIds = folders
+      .filter(folder => typeof folder.path === 'string' && roots.some(root => folderIsWithin(folder.path, root)))
+      .map(folder => folder.workspaceId);
+    if (writeBoundary.writableWorkspaceIds.some(id => id !== input.activeWorkspaceId)) {
+      writeBoundary.writable = 'selected-members';
+      writeBoundary.summary = '启动目录及配置的其他可写路径内的文件夹可写。';
+    }
+  }
 
   return {
     projectId: project.id,
     projectTitle: project.title,
     activeWorkspaceId: input.activeWorkspaceId,
     memberCount: members.length,
-    skills: winners.map(skill => ({
-      name: skill.name,
-      description: skill.description,
-      ...skill.whenToUse === undefined ? {} : { whenToUse: skill.whenToUse },
-      workspaceId: skill.workspaceId,
-      path: skill.path,
-    })),
-    collisions: collisions.map(collision => ({
-      name: collision.name,
-      winner: { workspaceId: collision.winner.workspaceId, path: collision.winner.path },
-      shadowed: collision.shadowed.map(item => ({ workspaceId: item.workspaceId, path: item.path })),
-    })),
+    folders,
+    skills,
+    skillCatalogConfirmed: input.effectiveSkills !== undefined,
+    collisions,
     instructions: loadedInstructions,
     instructionTotalBytes,
     silent,
     writeBoundary,
     summary: {
-      skillCount: winners.length,
+      skillCount: skills.length,
       collisionCount: collisions.length,
       instructionCount: loadedInstructions.length,
       contributingMemberCount: contributingMembers.size,
@@ -260,7 +325,7 @@ function formatContextPlan(plan) {
     lines.push(`名称冲突（${plan.collisions.length}）`);
     for (const collision of plan.collisions) {
       lines.push(`  ! ${collision.name}`);
-      lines.push(`      生效：${collision.winner.workspaceId}`);
+      lines.push(`      生效：${collision.winner.workspaceId ?? collision.winner.source}`);
       for (const shadowed of collision.shadowed) {
         lines.push(`      被遮蔽：${shadowed.workspaceId}`);
       }
