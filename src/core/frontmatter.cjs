@@ -106,7 +106,7 @@ function unquote(value) {
 /**
  * Parse one skill markdown file into the metadata Loom reports.
  *
- * @returns `{ name, description, whenToUse }`, or `undefined` when the file
+ * @returns `{ name, description, invocation, whenToUse }`, or `undefined` when the file
  *   lacks usable frontmatter — matching DSH's own refusal conditions for
  *   name/description so the preflight cannot over-report.
  */
@@ -125,7 +125,26 @@ function parseSkillMetadata(raw) {
     ? data.whenToUse.trim()
     : undefined;
 
-  return { name, description, ...whenToUse === undefined ? {} : { whenToUse } };
+  // Candidates and loaded definitions must carry the same resolved policy.
+  // Reject unsupported/invalid controls just as DSH's filesystem provider does.
+  if (['disableModelInvocation', 'modelInvocable', 'userInvocable'].some(key => Object.hasOwn(data, key))) return undefined;
+  const booleanField = key => {
+    if (!Object.hasOwn(data, key)) return undefined;
+    const value = String(data[key]).toLowerCase();
+    if (['true', 'yes', 'on', '1'].includes(value)) return true;
+    if (['false', 'no', 'off', '0'].includes(value)) return false;
+    throw new TypeError(`Invalid boolean: ${key}`);
+  };
+  let invocation;
+  try {
+    invocation = {
+      modelInvocable: booleanField('disable-model-invocation') !== true,
+      userInvocable: booleanField('user-invocable') !== false,
+    };
+  } catch {
+    return undefined;
+  }
+  return { name, description, invocation, ...whenToUse === undefined ? {} : { whenToUse } };
 }
 
 module.exports = {

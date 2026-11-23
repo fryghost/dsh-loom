@@ -164,6 +164,7 @@ function createSkillProvider(deps) {
             candidates.push({
               name: parsed.name,
               description: parsed.description,
+              invocation: parsed.invocation,
               ...parsed.whenToUse === undefined ? {} : { whenToUse: parsed.whenToUse },
               source: 'project-loom',
               provider: PROVIDER_NAME,
@@ -192,7 +193,7 @@ function createSkillProvider(deps) {
         name: parsed.name,
         description: parsed.description,
         ...parsed.whenToUse === undefined ? {} : { whenToUse: parsed.whenToUse },
-        invocation: { modelInvocable: true, userInvocable: true },
+        invocation: parsed.invocation,
         source: 'project-loom',
         provider: PROVIDER_NAME,
         resourceBase: { kind: 'directory', path: locator.directory },

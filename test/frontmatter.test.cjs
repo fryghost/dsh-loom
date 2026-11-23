@@ -12,7 +12,7 @@ test('parses a plain skill file', () => {
     'Body text here.',
   ].join('\n'));
 
-  assert.deepEqual(parsed, { name: 'my-skill', description: 'does a thing' });
+  assert.deepEqual(parsed, { name: 'my-skill', description: 'does a thing', invocation: { modelInvocable: true, userInvocable: true } });
 });
 
 test('parses whenToUse when present', () => {

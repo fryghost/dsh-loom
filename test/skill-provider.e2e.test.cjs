@@ -58,6 +58,7 @@ test('a sibling folder skill is visible to a session rooted in another member', 
 
     // The beta skill must load its body from the REAL beta path.
     const betaCandidate = candidates.find(c => c.name === 'beta-only');
+    assert.deepEqual(betaCandidate.invocation, { modelInvocable: true, userInvocable: true });
     const definition = await provider.get(betaCandidate);
     assert.equal(definition.content, 'Beta body.');
     assert.equal(definition.resourceBase.path, join(beta, '.dsh', 'skills', 'beta-only'));
@@ -72,6 +73,27 @@ test('a session outside any project gets an empty contribution', async () => {
     getProjectsForPath: async () => ({ projects: [] }),
   });
   assert.deepEqual(await provider.list({ cwd: '/somewhere/else' }), []);
+});
+
+test('listing and loading preserve skill invocation restrictions', async () => {
+  const root = await mkdtemp(join(tmpdir(), 'loom-policy-'));
+  try {
+    await makeSkill(join(root, '.dsh', 'skills'), 'restricted', 'restricted skill');
+    const path = join(root, '.dsh', 'skills', 'restricted', 'SKILL.md');
+    await writeFile(path, '---\nname: restricted\ndescription: restricted skill\ndisable-model-invocation: true\nuser-invocable: false\n---\nBody.');
+    const project = { members: [{ workspaceId: 'ws', role: 'writable' }] };
+    const provider = createSkillProvider({
+      getProjectsForPath: async () => ({ projects: [{ project, pathsByWorkspaceId: { ws: root } }] }),
+    });
+    const [candidate] = await provider.list({ cwd: root });
+    assert.deepEqual(candidate.invocation, { modelInvocable: false, userInvocable: false });
+    assert.deepEqual((await provider.get(candidate)).invocation, candidate.invocation);
+    await writeFile(path, '---\nname: restricted\ndescription: restricted skill\nuser-invocable: invalid\n---\nBody.');
+    assert.deepEqual(await provider.list({ cwd: root }), []);
+    assert.equal(await provider.get(candidate), undefined);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test('a missing cwd contributes nothing rather than throwing', async () => {
